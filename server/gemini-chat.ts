@@ -1,13 +1,10 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import dotenv from "dotenv";
+import { apiCache, generateChatCacheKey } from "./api-cache";
 
-// Load environment variables
-dotenv.config();
+// dotenv is loaded once in server/index.ts — no need to call it again
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
 
-console.log("Initializing Gemini AI for energy optimization chat...");
-console.log("API Key present:", !!process.env.GOOGLE_API_KEY);
-
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
+const CHAT_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
 export async function generateEnergyOptimizationResponse(
   userMessage: string,
@@ -16,52 +13,66 @@ export async function generateEnergyOptimizationResponse(
     location?: string;
     households?: any[];
     energyData?: any;
-  }
+  },
 ): Promise<string> {
+  // Check cache for identical questions
+  const cacheKey = generateChatCacheKey(userMessage, []);
+  const cached = apiCache.get(cacheKey);
+  if (cached) return cached as string;
+
   try {
-    console.log("Generating AI response for energy optimization query");
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 300,
+        topP: 0.9,
+      },
+    });
 
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-    const contextInfo = userContext ? `
+    const contextInfo = userContext
+      ? `
 USER CONTEXT:
 - Name: ${userContext.username}
-- Location: ${userContext.location || 'Not specified'}
+- Location: ${userContext.location || "Not specified"}
 - Households: ${userContext.households?.length || 0} registered
-- Current Energy Data: ${userContext.energyData ? 'Available' : 'Not available'}
-` : '';
+- Has energy data: ${userContext.energyData ? "Yes" : "No"}
+${userContext.energyData ? `- Solar capacity: ${userContext.energyData.solarCapacity || "N/A"} kW` : ""}
+${userContext.energyData ? `- Battery level: ${userContext.energyData.batteryLevel || "N/A"}%` : ""}
+`
+      : "";
 
-    const systemPrompt = `You are a helpful SolarSense energy advisor. 
+    const systemPrompt = `You are SolarSense AI — an expert solar energy advisor for residential users in India.
 
 ${contextInfo}
 
-RESPONSE RULES:
-- Write 2-3 sentences maximum (never exceed 10 sentences)
-- Be helpful and practical
-- Use simple, clear language
-- Focus on actionable advice
+RULES:
+- Maximum 3 concise sentences
+- Give specific, actionable advice with numbers when possible
+- Reference Indian market rates (₹6.5/kWh, ₹45/watt) when relevant
+- If the user's data is available, personalize the answer
+- Use markdown formatting for clarity (bold key terms, bullet points if needed)
 
-USER QUESTION: ${userMessage}
+QUESTION: ${userMessage}
 
 ANSWER:`;
 
     const result = await model.generateContent(systemPrompt);
-    const response = await result.response;
-    const text = response.text();
+    const text = result.response.text();
 
-    console.log("AI response generated successfully");
+    // Cache the response
+    apiCache.set(cacheKey, text, CHAT_CACHE_TTL);
     return text;
-
   } catch (error) {
-    console.error('Gemini AI error:', error);
-    
-    // Fallback responses (2-3 sentences)
-    if (userMessage.toLowerCase().includes('solar')) {
-      return "Keep your solar panels clean and free of debris. Check for shading from trees or buildings that might reduce efficiency. Monitor peak sun hours between 10 AM and 2 PM for best performance.";
-    } else if (userMessage.toLowerCase().includes('battery')) {
-      return "Avoid deep discharge cycles to extend battery life. Keep batteries between 20-80% charge when possible. Monitor temperature as batteries work best in moderate conditions.";
-    } else {
-      return "I'm having trouble connecting to the AI service right now. Please try again in a moment. Feel free to ask about solar panels, batteries, or energy trading.";
-    }
+    console.error("Gemini AI error:", error);
+
+    const q = userMessage.toLowerCase();
+    if (q.includes("solar"))
+      return "Keep panels clean and unshaded for best output. Peak generation is between 10 AM–2 PM. A typical 5 kW system saves ~₹50,000/year.";
+    if (q.includes("battery"))
+      return "Keep batteries between 20–80% charge to maximize lifespan. Lithium-ion batteries in India cost ₹8–12/Wh.";
+    if (q.includes("trade") || q.includes("sell"))
+      return "You can trade surplus energy with neighbours through SolarSense. Price your energy competitively around ₹5–6/kWh.";
+    return "I'm having trouble connecting to the AI service. Please try again shortly.";
   }
 }

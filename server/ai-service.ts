@@ -1,91 +1,101 @@
 import * as fs from "fs";
 import { GoogleGenAI } from "@google/genai";
-import type { InstallationResult, FaultResult } from "../shared/schema";
-import dotenv from "dotenv";
-import { 
-  performInstallationCalculations, 
-  calculateOptimalPanelCount, 
+import {
+  performInstallationCalculations,
+  calculateOptimalPanelCount,
   validateCalculationInputs,
   getMarketStandardsSummary,
-  MARKET_STANDARDS 
-} from './calculation-service.js';
-import { apiCache, generateImageCacheKey } from './api-cache';
+  MARKET_STANDARDS,
+} from "./calculation-service.js";
+import { apiCache, generateImageCacheKey } from "./api-cache";
 
-// Load environment variables first
-dotenv.config();
+// Types for AI analysis results (not stored in DB, only returned from AI)
+export interface InstallationResult {
+  totalPanels: number;
+  coverage: number;
+  powerOutput: number;
+  efficiency: number;
+  confidence: number;
+  orientation: string;
+  shadingAnalysis: string;
+  notes: string;
+  roofType: string;
+  estimatedRoofArea: number;
+  usableRoofArea: number;
+  obstructions: string[];
+  regions: { x: number; y: number; width: number; height: number }[];
+}
 
-console.log("Initializing Google AI SDK...");
-console.log("API Key present:", !!process.env.GOOGLE_API_KEY);
-console.log("API Key length:", process.env.GOOGLE_API_KEY?.length || 0);
+export interface FaultResult {
+  panelId: string;
+  faults: {
+    type: string;
+    severity: string;
+    x: number;
+    y: number;
+    description: string;
+  }[];
+  overallHealth: string;
+  recommendations: string[];
+}
 
-const ai = new GoogleGenAI(process.env.GOOGLE_API_KEY || "");
+// dotenv is loaded once in server/index.ts — no need to call it again
+const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY || "" });
 
 // Image preprocessing and validation with performance optimization
 function validateImage(imagePath: string): boolean {
   try {
     const stats = fs.statSync(imagePath);
     const fileSizeInMB = stats.size / (1024 * 1024);
-    
+
     // Check file size (max 8MB for better performance, Gemini supports up to 20MB)
     if (fileSizeInMB > 8) {
-      console.warn(`Image size ${fileSizeInMB.toFixed(2)}MB exceeds 8MB performance limit`);
+      console.warn(
+        `Image size ${fileSizeInMB.toFixed(2)}MB exceeds 8MB performance limit`,
+      );
       return false;
     }
-    
+
     // Check if file exists and is readable
     fs.accessSync(imagePath, fs.constants.R_OK);
-    
+
     // Additional performance check - ensure file is not corrupted
-    const buffer = fs.readFileSync(imagePath, { flag: 'r' });
+    const buffer = fs.readFileSync(imagePath, { flag: "r" });
     if (buffer.length === 0) {
-      console.error('Image file is empty or corrupted');
+      console.error("Image file is empty or corrupted");
       return false;
     }
-    
+
     return true;
   } catch (error) {
-    console.error('Image validation failed:', error);
+    console.error("Image validation failed:", error);
     return false;
   }
 }
 
-// Image classification cache to reduce API calls
-const classificationCache = new Map<string, { result: boolean; timestamp: number; type: string }>();
-const CACHE_DURATION = 60 * 60 * 1000; // 1 hour cache
-
 // Image classification to ensure only solar panel/roof images are processed
-export async function classifyImage(imagePath: string, expectedType: 'rooftop' | 'solar-panel'): Promise<boolean> {
+export async function classifyImage(
+  imagePath: string,
+  expectedType: "rooftop" | "solar-panel",
+): Promise<boolean> {
   try {
-    console.log(`Classifying image for ${expectedType} content`);
-    
-    // Generate cache key based on file size and type (simple hash alternative)
     const stats = fs.statSync(imagePath);
-    const cacheKey = `${stats.size}-${stats.mtime.getTime()}-${expectedType}`;
-    
-    // Check cache first to avoid unnecessary API calls
-    const cached = classificationCache.get(cacheKey);
-    if (cached && (Date.now() - cached.timestamp < CACHE_DURATION)) {
-      console.log('Using cached classification result');
-      return cached.result;
-    }
-    
-    // Clean up old cache entries
-    const now = Date.now();
-    for (const [key, entry] of classificationCache.entries()) {
-      if (now - entry.timestamp > CACHE_DURATION) {
-        classificationCache.delete(key);
-      }
-    }
-    
+    const cacheKey = `classify_${stats.size}_${stats.mtime.getTime()}_${expectedType}`;
+
+    // Use centralized cache
+    const cached = apiCache.get(cacheKey);
+    if (cached !== null) return cached as boolean;
+
     const imageBytes = fs.readFileSync(imagePath);
     const mimeType = getMimeType(imagePath);
-    
-    const classificationPrompt = expectedType === 'rooftop' 
-      ? `Analyze this image quickly. Reply with JSON: {"isValid": boolean, "reason": string}
+
+    const classificationPrompt =
+      expectedType === "rooftop"
+        ? `Analyze this image quickly. Reply with JSON: {"isValid": boolean, "reason": string}
          
          VALID if shows: rooftop, building roof, house exterior with roof visible.
          INVALID if shows: no roof, indoors, people, cars, landscapes, existing solar panels.`
-      : `Analyze this image quickly. Reply with JSON: {"isValid": boolean, "reason": string}
+        : `Analyze this image quickly. Reply with JSON: {"isValid": boolean, "reason": string}
          
          VALID if shows: solar panels, photovoltaic modules, solar arrays.
          INVALID if shows: no solar panels, rooftops only, other objects.`;
@@ -99,109 +109,110 @@ export async function classifyImage(imagePath: string, expectedType: 'rooftop' |
             {
               inlineData: {
                 mimeType: mimeType,
-                data: imageBytes.toString('base64')
-              }
-            }
-          ]
-        }
+                data: imageBytes.toString("base64"),
+              },
+            },
+          ],
+        },
       ],
-      generationConfig: {
-        maxOutputTokens: 50, // Reduced tokens for faster classification
-        temperature: 0.1, // Lower temperature for faster responses
-        topP: 0.9, // Optimized for efficiency
-      }
+      config: {
+        maxOutputTokens: 50,
+        temperature: 0.1,
+        topP: 0.9,
+      },
     });
-    
-    const responseText = result.text;
-    console.log('AI Classification Response:', responseText);
-    
+
+    const responseText = result.text ?? "";
+
     // Parse the AI response
-    const cleanedText = responseText.replace(/```json\n?|```\n?/g, '').trim();
+    const cleanedText = responseText.replace(/```json\n?|```\n?/g, "").trim();
     const result_data = JSON.parse(cleanedText);
-    
-    console.log('Classification result:', result_data);
-    
+
     const isValid = result_data.isValid === true;
-    
-    // Cache the result to avoid repeated API calls
-    classificationCache.set(cacheKey, {
-      result: isValid,
-      timestamp: Date.now(),
-      type: expectedType
-    });
-    
+
+    // Cache the result in the centralized cache (1 hour TTL)
+    apiCache.set(cacheKey, isValid, 60 * 60 * 1000);
+
     return isValid;
   } catch (error) {
-    console.error('Image classification failed:', error);
-    console.log('Classification error - allowing image to proceed with analysis');
+    console.error("Image classification failed:", error);
     return true; // Allow if classification fails to avoid blocking valid images
   }
 }
 
 function getMimeType(imagePath: string): string {
-  const extension = imagePath.toLowerCase().split('.').pop();
+  const extension = imagePath.toLowerCase().split(".").pop();
   switch (extension) {
-    case 'jpg':
-    case 'jpeg':
-      return 'image/jpeg';
-    case 'png':
-      return 'image/png';
-    case 'webp':
-      return 'image/webp';
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "webp":
+      return "image/webp";
     default:
-      return 'image/jpeg'; // Default fallback
+      return "image/jpeg"; // Default fallback
   }
 }
 
-export async function analyzeInstallationWithAI(imagePath: string, roofInput?: any): Promise<InstallationResult> {
-  console.log("Starting AI-powered installation analysis");
+export async function analyzeInstallationWithAI(
+  imagePath: string,
+  roofInput?: any,
+): Promise<InstallationResult> {
   const maxRetries = 3;
   let lastError: any;
 
   // Validate image before processing
   if (!validateImage(imagePath)) {
-    console.error('Image validation failed');
-    throw new Error('Invalid image format. Please upload a valid image file.');
+    console.error("Image validation failed");
+    throw new Error("Invalid image format. Please upload a valid image file.");
   }
 
   // Validate image content for rooftop analysis
-  console.log('Validating image content for rooftop analysis...');
-  const isValidRooftop = await classifyImage(imagePath, 'rooftop');
+  console.log("Validating image content for rooftop analysis...");
+  const isValidRooftop = await classifyImage(imagePath, "rooftop");
   if (!isValidRooftop) {
-    console.error('Image classification failed: Not a valid rooftop image');
-    throw new Error('This image does not show a rooftop suitable for solar panel installation. Please upload an image showing a building roof from above or at an angle.');
+    console.error("Image classification failed: Not a valid rooftop image");
+    throw new Error(
+      "This image does not show a rooftop suitable for solar panel installation. Please upload an image showing a building roof from above or at an angle.",
+    );
   }
-  console.log('Image validation passed: Valid rooftop detected');
+  console.log("Image validation passed: Valid rooftop detected");
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`AI analysis attempt ${attempt}/${maxRetries}`);
-      
+
       const imageBytes = fs.readFileSync(imagePath);
       const mimeType = getMimeType(imagePath);
-      
+
       // Calculate panel size adjustments based on roof size
-      let panelSizeAdjustment = '';
+      let panelSizeAdjustment = "";
       if (roofInput?.roofSize) {
         const roofSize = parseInt(roofInput.roofSize);
         if (roofSize < 800) {
-          panelSizeAdjustment = 'Small roof detected - use smaller panel dimensions (0.06-0.08 width, 0.04-0.06 height)';
+          panelSizeAdjustment =
+            "Small roof detected - use smaller panel dimensions (0.06-0.08 width, 0.04-0.06 height)";
         } else if (roofSize > 2000) {
-          panelSizeAdjustment = 'Large roof detected - use standard panel dimensions (0.08-0.10 width, 0.06-0.08 height)';
+          panelSizeAdjustment =
+            "Large roof detected - use standard panel dimensions (0.08-0.10 width, 0.06-0.08 height)";
         } else {
-          panelSizeAdjustment = 'Medium roof detected - use medium panel dimensions (0.07-0.09 width, 0.05-0.07 height)';
+          panelSizeAdjustment =
+            "Medium roof detected - use medium panel dimensions (0.07-0.09 width, 0.05-0.07 height)";
         }
       }
 
-      const roofInputInfo = roofInput ? `
+      const roofInputInfo = roofInput
+        ? `
       USER-PROVIDED ROOF INFORMATION:
-      - Roof Size: ${roofInput.roofSize ? `${roofInput.roofSize} sq ft` : 'Auto-detect from image'}
+      - Roof Size: ${roofInput.roofSize ? `${roofInput.roofSize} sq ft` : "Auto-detect from image"}
       - Roof Shape: ${roofInput.roofShape}
       - Panel Size Preference: ${roofInput.panelSize}
-      ${panelSizeAdjustment ? `- Panel Size Adjustment: ${panelSizeAdjustment}` : ''}
+      ${panelSizeAdjustment ? `- Panel Size Adjustment: ${panelSizeAdjustment}` : ""}
       
       INSTRUCTIONS: Use this information to cross-validate your image analysis. If provided roof size differs significantly from your visual estimate, note the discrepancy and use the user's input as the primary reference.
-      ` : '';
+      `
+        : "";
 
       const installationPrompt = `
       You are a solar panel expert analyzing rooftop images. Provide ONLY basic roof data - no panel placement or calculations.
@@ -257,131 +268,166 @@ export async function analyzeInstallationWithAI(imagePath: string, roofInput?: a
               {
                 inlineData: {
                   mimeType: mimeType,
-                  data: imageBytes.toString('base64')
-                }
-              }
-            ]
-          }
-        ]
+                  data: imageBytes.toString("base64"),
+                },
+              },
+            ],
+          },
+        ],
       });
-      
-      const responseText = result.text;
-      console.log('AI Installation Response:', responseText);
-      
+
+      const responseText = result.text ?? "";
+
       // Parse the AI response
-      const cleanedText = responseText.replace(/```json\n?|```\n?/g, '').trim();
+      const cleanedText = responseText.replace(/```json\n?|```\n?/g, "").trim();
       const aiResult = JSON.parse(cleanedText);
-      
+
       // Get AI's basic roof data and recommended panel count
       const finalPanelCount = aiResult.recommendedPanels || 4; // Use AI's recommendation
-      
-      console.log(`AI Roof Analysis: ${finalPanelCount} panels recommended, ${aiResult.primaryOrientation} orientation, ${aiResult.pitchCategory} pitch, ${aiResult.shadingLevel} shading`);
-      
+
+      console.log(
+        `AI Roof Analysis: ${finalPanelCount} panels recommended, ${aiResult.primaryOrientation} orientation, ${aiResult.pitchCategory} pitch, ${aiResult.shadingLevel} shading`,
+      );
+
       // Use user-provided roof size if available, otherwise use AI estimate
-      const finalRoofArea = roofInput?.roofSize ? parseInt(roofInput.roofSize) : aiResult.usableRoofArea;
-      
+      const finalRoofArea = roofInput?.roofSize
+        ? parseInt(roofInput.roofSize)
+        : aiResult.usableRoofArea;
+
       // Manual calculations using simple market standards
       const PANEL_AREA = 21.125; // sq ft per panel (standard size)
       const PANEL_POWER = 0.4; // kW per panel (400W)
-      
+
       // Calculate roof coverage: usable_area ÷ total_area × 100
-      const coveragePercentage = Math.round((finalRoofArea / aiResult.estimatedRoofArea) * 100 * 100) / 100;
-      
+      const coveragePercentage =
+        Math.round((finalRoofArea / aiResult.estimatedRoofArea) * 100 * 100) /
+        100;
+
       // Calculate power output: panels × power_per_panel
       const powerOutputKW = finalPanelCount * PANEL_POWER;
-      
+
       // Manual efficiency calculation based on orientation
       let efficiencyScore = 75; // Base efficiency
-      if (aiResult.primaryOrientation === 'south') efficiencyScore = 90;
-      else if (aiResult.primaryOrientation === 'southeast' || aiResult.primaryOrientation === 'southwest') efficiencyScore = 85;
-      else if (aiResult.primaryOrientation === 'east' || aiResult.primaryOrientation === 'west') efficiencyScore = 75;
+      if (aiResult.primaryOrientation === "south") efficiencyScore = 90;
+      else if (
+        aiResult.primaryOrientation === "southeast" ||
+        aiResult.primaryOrientation === "southwest"
+      )
+        efficiencyScore = 85;
+      else if (
+        aiResult.primaryOrientation === "east" ||
+        aiResult.primaryOrientation === "west"
+      )
+        efficiencyScore = 75;
       else efficiencyScore = 65;
-      
+
       // Adjust for pitch
-      if (aiResult.pitchCategory === 'optimal') efficiencyScore += 5;
-      else if (aiResult.pitchCategory === 'steep' || aiResult.pitchCategory === 'flat') efficiencyScore -= 5;
-      
+      if (aiResult.pitchCategory === "optimal") efficiencyScore += 5;
+      else if (
+        aiResult.pitchCategory === "steep" ||
+        aiResult.pitchCategory === "flat"
+      )
+        efficiencyScore -= 5;
+
       // Adjust for shading
-      if (aiResult.shadingLevel === 'none') efficiencyScore += 5;
-      else if (aiResult.shadingLevel === 'minimal') efficiencyScore += 2;
-      else if (aiResult.shadingLevel === 'light') efficiencyScore -= 2;
-      else if (aiResult.shadingLevel === 'moderate') efficiencyScore -= 10;
+      if (aiResult.shadingLevel === "none") efficiencyScore += 5;
+      else if (aiResult.shadingLevel === "minimal") efficiencyScore += 2;
+      else if (aiResult.shadingLevel === "light") efficiencyScore -= 2;
+      else if (aiResult.shadingLevel === "moderate") efficiencyScore -= 10;
       else efficiencyScore -= 20;
-      
+
       // Keep efficiency within realistic bounds
       efficiencyScore = Math.max(60, Math.min(95, efficiencyScore));
-      
+
       // Generate realistic panel regions only on roof surfaces, avoiding obstacles
       const generatedRegions = [];
-      const panelWidth = 0.08;  // Smaller, more realistic panel size
+      const panelWidth = 0.08; // Smaller, more realistic panel size
       const panelHeight = 0.06;
-      const minSpacing = 0.02;  // Minimum spacing between panels
-      
+      const minSpacing = 0.02; // Minimum spacing between panels
+
       // Define safe roof areas with better coverage (using more of the available roof)
       const safeRoofAreas = [
         // Expanded roof sections for better utilization
         { x: 0.15, y: 0.25, width: 0.35, height: 0.35 }, // Left main section
         { x: 0.55, y: 0.25, width: 0.35, height: 0.35 }, // Right main section
-        { x: 0.20, y: 0.65, width: 0.60, height: 0.20 }, // Lower section (expanded)
-        { x: 0.25, y: 0.15, width: 0.50, height: 0.08 }  // Upper section (new)
+        { x: 0.2, y: 0.65, width: 0.6, height: 0.2 }, // Lower section (expanded)
+        { x: 0.25, y: 0.15, width: 0.5, height: 0.08 }, // Upper section (new)
       ];
-      
+
       // Calculate total roof capacity first
       let totalRoofCapacity = 0;
       for (const area of safeRoofAreas) {
         const panelsPerRow = Math.floor(area.width / (panelWidth + minSpacing));
-        const panelsPerCol = Math.floor(area.height / (panelHeight + minSpacing));
+        const panelsPerCol = Math.floor(
+          area.height / (panelHeight + minSpacing),
+        );
         totalRoofCapacity += panelsPerRow * panelsPerCol;
       }
-      
+
       // Use the smaller of AI recommendation or actual roof capacity for optimal utilization
       const optimalPanelCount = Math.min(finalPanelCount, totalRoofCapacity);
-      
+
       let panelsPlaced = 0;
-      
+
       // Place panels to maximize roof utilization
       for (const area of safeRoofAreas) {
         if (panelsPlaced >= optimalPanelCount) break;
-        
+
         // Calculate how many panels can fit in this area
         const panelsPerRow = Math.floor(area.width / (panelWidth + minSpacing));
-        const panelsPerCol = Math.floor(area.height / (panelHeight + minSpacing));
-        
+        const panelsPerCol = Math.floor(
+          area.height / (panelHeight + minSpacing),
+        );
+
         // Place all possible panels in this area (up to remaining count)
-        for (let row = 0; row < panelsPerCol && panelsPlaced < optimalPanelCount; row++) {
-          for (let col = 0; col < panelsPerRow && panelsPlaced < optimalPanelCount; col++) {
+        for (
+          let row = 0;
+          row < panelsPerCol && panelsPlaced < optimalPanelCount;
+          row++
+        ) {
+          for (
+            let col = 0;
+            col < panelsPerRow && panelsPlaced < optimalPanelCount;
+            col++
+          ) {
             const panelX = area.x + col * (panelWidth + minSpacing);
             const panelY = area.y + row * (panelHeight + minSpacing);
-            
+
             // Ensure panel stays within area bounds
-            if (panelX + panelWidth <= area.x + area.width && 
-                panelY + panelHeight <= area.y + area.height) {
+            if (
+              panelX + panelWidth <= area.x + area.width &&
+              panelY + panelHeight <= area.y + area.height
+            ) {
               generatedRegions.push({
                 x: panelX,
                 y: panelY,
                 width: panelWidth,
-                height: panelHeight
+                height: panelHeight,
               });
               panelsPlaced++;
             }
           }
         }
       }
-      
+
       // If we couldn't place all panels in safe areas, adjust the count
       const actualPanelsPlaced = generatedRegions.length;
       if (actualPanelsPlaced < finalPanelCount) {
-        console.log(`Adjusted panel count from ${finalPanelCount} to ${actualPanelsPlaced} due to roof constraints`);
+        console.log(
+          `Adjusted panel count from ${finalPanelCount} to ${actualPanelsPlaced} due to roof constraints`,
+        );
       }
-      
+
       // Recalculate with actual placed panels
       const finalActualPanelCount = actualPanelsPlaced;
       const finalPowerOutputKW = finalActualPanelCount * PANEL_POWER;
       // Coverage remains the same: usable_area ÷ total_area × 100
       const finalCoveragePercentage = coveragePercentage;
-      
-      console.log(`Backend Calculations: ${finalActualPanelCount} panels placed on roof, ${finalCoveragePercentage}% coverage, ${finalPowerOutputKW}kW power, ${efficiencyScore}% efficiency`);
-      
+
+      console.log(
+        `Backend Calculations: ${finalActualPanelCount} panels placed on roof, ${finalCoveragePercentage}% coverage, ${finalPowerOutputKW}kW power, ${efficiencyScore}% efficiency`,
+      );
+
       // Use manual calculations and generated regions for consistent results
       const result_data: InstallationResult = {
         totalPanels: finalActualPanelCount,
@@ -396,59 +442,69 @@ export async function analyzeInstallationWithAI(imagePath: string, roofInput?: a
         estimatedRoofArea: aiResult.estimatedRoofArea,
         usableRoofArea: finalRoofArea,
         obstructions: [],
-        regions: generatedRegions
+        regions: generatedRegions,
       };
-      
-      console.log('Installation analysis completed successfully');
+
+      console.log("Installation analysis completed successfully");
       return result_data;
-      
     } catch (error) {
-      console.error('Installation analysis failed:', error);
+      console.error("Installation analysis failed:", error);
       lastError = error;
-      
+
       if (attempt === maxRetries) {
-        console.error('AI analysis failed after all retries, no fallback available');
-        throw new Error('AI analysis service is currently unavailable. Please try again later or contact support.');
+        console.error(
+          "AI analysis failed after all retries, no fallback available",
+        );
+        throw new Error(
+          "AI analysis service is currently unavailable. Please try again later or contact support.",
+        );
       }
-      
+
       // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
     }
   }
-  
+
   // Should never reach here due to throw statements above
-  throw new Error('AI analysis service is currently unavailable. Please try again later or contact support.');
+  throw new Error(
+    "AI analysis service is currently unavailable. Please try again later or contact support.",
+  );
 }
 
-export async function analyzeFaultsWithAI(imagePath: string, originalFilename?: string): Promise<FaultResult> {
+export async function analyzeFaultsWithAI(
+  imagePath: string,
+  originalFilename?: string,
+): Promise<FaultResult> {
   console.log("Starting AI-powered fault detection analysis");
   const maxRetries = 3;
   let lastError: any;
 
   // Validate image before processing
   if (!validateImage(imagePath)) {
-    console.error('Image validation failed');
-    throw new Error('Invalid image format. Please upload a valid image file.');
+    console.error("Image validation failed");
+    throw new Error("Invalid image format. Please upload a valid image file.");
   }
 
   // Validate image content for solar panel analysis
-  console.log('Validating image content for solar panel analysis...');
-  const isValidSolarPanel = await classifyImage(imagePath, 'solar-panel');
+  console.log("Validating image content for solar panel analysis...");
+  const isValidSolarPanel = await classifyImage(imagePath, "solar-panel");
   if (!isValidSolarPanel) {
-    console.error('Image classification failed: Not a valid solar panel image');
-    throw new Error('This image does not show solar panels suitable for fault detection. Please upload an image showing solar panels or photovoltaic equipment.');
+    console.error("Image classification failed: Not a valid solar panel image");
+    throw new Error(
+      "This image does not show solar panels suitable for fault detection. Please upload an image showing solar panels or photovoltaic equipment.",
+    );
   }
-  console.log('Image validation passed: Valid solar panel detected');
+  console.log("Image validation passed: Valid solar panel detected");
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`AI analysis attempt ${attempt}/${maxRetries}`);
-      
+
       const imageBytes = fs.readFileSync(imagePath);
       const mimeType = getMimeType(imagePath);
 
       // Use original filename if provided, otherwise generate professional panel ID
-      const panelId = originalFilename 
+      const panelId = originalFilename
         ? originalFilename.replace(/\.[^/.]+$/, "") // Remove file extension
         : `Panel-${Date.now().toString().slice(-3)}`;
 
@@ -584,38 +640,42 @@ export async function analyzeFaultsWithAI(imagePath: string, originalFilename?: 
               {
                 inlineData: {
                   mimeType: mimeType,
-                  data: imageBytes.toString('base64')
-                }
-              }
-            ]
-          }
-        ]
+                  data: imageBytes.toString("base64"),
+                },
+              },
+            ],
+          },
+        ],
       });
-      
-      const responseText = result.text;
-      console.log('AI Fault Detection Response:', responseText);
-      
+
+      const responseText = result.text ?? "";
+
       // Parse the AI response
-      const cleanedText = responseText.replace(/```json\n?|```\n?/g, '').trim();
+      const cleanedText = responseText.replace(/```json\n?|```\n?/g, "").trim();
       const result_data: FaultResult = JSON.parse(cleanedText);
-      
-      console.log('Fault detection analysis successful');
+
+      console.log("Fault detection analysis successful");
       return result_data;
-      
     } catch (error) {
-      console.error('Fault detection analysis failed:', error);
+      console.error("Fault detection analysis failed:", error);
       lastError = error;
-      
+
       if (attempt === maxRetries) {
-        console.error('AI analysis failed after all retries, no fallback available');
-        throw new Error('AI analysis service is currently unavailable. Please try again later or contact support.');
+        console.error(
+          "AI analysis failed after all retries, no fallback available",
+        );
+        throw new Error(
+          "AI analysis service is currently unavailable. Please try again later or contact support.",
+        );
       }
-      
+
       // Wait before retrying
-      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
+      await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
     }
   }
-  
+
   // Should never reach here due to throw statements above
-  throw new Error('AI analysis service is currently unavailable. Please try again later or contact support.');
+  throw new Error(
+    "AI analysis service is currently unavailable. Please try again later or contact support.",
+  );
 }

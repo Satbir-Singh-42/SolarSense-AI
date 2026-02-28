@@ -7,43 +7,26 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Separator } from "@/components/ui/separator";
 import {
   Send,
-  Bot,
-  User,
-  Home,
   Sun,
   AlertTriangle,
   CheckCircle,
   Settings,
   Lightbulb,
   HelpCircle,
-  CloudSun,
   Mic,
   MicOff,
-  Menu,
-  Search,
   MessageCircle,
   X,
   Square,
   ChevronDown,
   Copy,
   Check,
-  LogOut,
 } from "lucide-react";
 import { format } from "date-fns";
-import { Link } from "wouter";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-  Sheet,
-  SheetContent,
-  SheetTrigger,
-  SheetTitle,
-  SheetDescription,
-} from "@/components/ui/sheet";
-import { LazyLoading } from "@/components/ui/lazy-loading";
 import { useAuth } from "@/hooks/use-auth";
 import Navbar from "@/components/navbar";
 
@@ -116,11 +99,11 @@ const quickPrompts: QuickPrompt[] = [
 ];
 
 export default function Chat() {
-  const { user, logoutMutation } = useAuth();
+  const { user } = useAuth();
   const [message, setMessage] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(
-    null
+    null,
   );
   const [showOnlineStatus, setShowOnlineStatus] = useState(() => {
     // Only show online status if there are no user messages in the chat history
@@ -130,7 +113,7 @@ export default function Chat() {
         try {
           const parsedMessages = JSON.parse(saved);
           const hasUserMessages = parsedMessages.some(
-            (msg: any) => msg.sender === "user"
+            (msg: any) => msg.sender === "user",
           );
           return !hasUserMessages;
         } catch (e) {
@@ -148,7 +131,7 @@ export default function Chat() {
         try {
           const parsedMessages = JSON.parse(saved);
           const hasUserMessages = parsedMessages.some(
-            (msg: any) => msg.sender === "user"
+            (msg: any) => msg.sender === "user",
           );
           return !hasUserMessages;
         } catch (e) {
@@ -194,7 +177,7 @@ export default function Chat() {
   });
   const [typingMessageId, setTypingMessageId] = useState<number | null>(null);
   const [displayedText, setDisplayedText] = useState<{ [key: number]: string }>(
-    {}
+    {},
   );
   const [isTyping, setIsTyping] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<number | null>(null);
@@ -227,7 +210,7 @@ export default function Chat() {
           setMessages(userMessages);
           // Show quick start only if user has no messages
           const hasUserMessages = userMessages.some(
-            (msg: any) => msg.sender === "user"
+            (msg: any) => msg.sender === "user",
           );
           setShowQuickStart(!hasUserMessages);
           setShowOnlineStatus(!hasUserMessages);
@@ -298,14 +281,14 @@ export default function Chat() {
           // Keyboard is visible - adjust the layout
           document.documentElement.style.setProperty(
             "--viewport-height",
-            `${window.visualViewport.height}px`
+            `${window.visualViewport.height}px`,
           );
           document.body.classList.add("mobile-keyboard-open");
         } else {
           // Keyboard is hidden - reset to full height
           document.documentElement.style.setProperty(
             "--viewport-height",
-            "100vh"
+            "100vh",
           );
           document.body.classList.remove("mobile-keyboard-open");
         }
@@ -317,10 +300,10 @@ export default function Chat() {
       handleResize(); // Initial call
 
       return () => {
-        window.visualViewport.removeEventListener("resize", handleResize);
+        window.visualViewport?.removeEventListener("resize", handleResize);
         document.body.classList.remove(
           "visual-viewport-supported",
-          "mobile-keyboard-open"
+          "mobile-keyboard-open",
         );
       };
     }
@@ -392,15 +375,27 @@ export default function Chat() {
 
     if (scrollElement) {
       scrollElement.addEventListener("scroll", handleScroll, { passive: true });
-      scrollElement.addEventListener("touchstart", handleTouchStart, {
+      scrollElement.addEventListener(
+        "touchstart",
+        handleTouchStart as EventListener,
+        {
+          passive: true,
+        },
+      );
+      scrollElement.addEventListener("wheel", handleWheel as EventListener, {
         passive: true,
       });
-      scrollElement.addEventListener("wheel", handleWheel, { passive: true });
 
       return () => {
         scrollElement.removeEventListener("scroll", handleScroll);
-        scrollElement.removeEventListener("touchstart", handleTouchStart);
-        scrollElement.removeEventListener("wheel", handleWheel);
+        scrollElement.removeEventListener(
+          "touchstart",
+          handleTouchStart as EventListener,
+        );
+        scrollElement.removeEventListener(
+          "wheel",
+          handleWheel as EventListener,
+        );
         clearTimeout(interactionTimeout);
       };
     }
@@ -416,7 +411,7 @@ export default function Chat() {
       recognition.interimResults = false;
       recognition.lang = "en-US";
 
-      recognition.onresult = (event) => {
+      recognition.onresult = (event: SpeechRecognitionEvent) => {
         const transcript = event.results[0][0].transcript;
         setMessage(transcript);
         setIsListening(false);
@@ -441,7 +436,7 @@ export default function Chat() {
       const conversationHistory = messages
         .slice(-10)
         .map(
-          (msg) => `${msg.sender === "user" ? "User" : "AI"}: ${msg.message}`
+          (msg) => `${msg.sender === "user" ? "User" : "AI"}: ${msg.message}`,
         );
 
       const response = await apiRequest("POST", "/api/ai/chat", {
@@ -664,8 +659,8 @@ export default function Chat() {
           prev.map((msg) =>
             msg.id === typingMessageId
               ? { ...msg, message: currentPartialText }
-              : msg
-          )
+              : msg,
+          ),
         );
       }
     }
@@ -841,8 +836,7 @@ export default function Chat() {
       <Navbar currentPage="chat" />
 
       {/* Main Content */}
-      <main
-        className="container mx-auto px-2 sm:px-4 md:px-6 lg:px-8 xl:px-12 py-0 pt-20">
+      <main className="container mx-auto px-2 sm:px-4 md:px-6 lg:px-8 xl:px-12 py-0 pt-20">
         <div className="flex flex-col chat-container h-[calc(100svh-60px)] max-h-[calc(100svh-60px)] md:h-[calc(100vh-60px)] md:max-h-[calc(100vh-60px)]">
           {/* Chat Area - Positioned directly above prompt bar */}
           <div className="flex-1 flex flex-col min-h-0 relative">
@@ -873,23 +867,23 @@ export default function Chat() {
                         apiStatus === "connected"
                           ? "bg-green-100 text-green-700 border-green-200"
                           : apiStatus === "error"
-                          ? "bg-red-100 text-red-700 border-red-200"
-                          : "bg-yellow-100 text-yellow-700 border-yellow-200"
+                            ? "bg-red-100 text-red-700 border-red-200"
+                            : "bg-yellow-100 text-yellow-700 border-yellow-200"
                       }`}>
                       <div
                         className={`w-2 h-2 rounded-full ${
                           apiStatus === "connected"
                             ? "bg-green-500 animate-pulse"
                             : apiStatus === "error"
-                            ? "bg-red-500"
-                            : "bg-yellow-500 animate-bounce"
+                              ? "bg-red-500"
+                              : "bg-yellow-500 animate-bounce"
                         }`}></div>
                       <span className="text-xs font-medium">
                         {apiStatus === "connected"
                           ? "Online"
                           : apiStatus === "error"
-                          ? "Offline"
-                          : "Checking"}
+                            ? "Offline"
+                            : "Checking"}
                       </span>
                     </Badge>
                     {/* New Conversation Button - Only show if there are user messages */}
@@ -920,7 +914,7 @@ export default function Chat() {
                         key={msg.id}
                         className={`relative flex items-start gap-2 sm:gap-3 p-2 sm:p-3 md:p-4 rounded-lg group ${getMessageColor(
                           msg.sender,
-                          msg.category
+                          msg.category,
                         )}`}>
                         <Avatar className="h-7 w-7 sm:h-8 sm:w-8 md:h-10 md:w-10 shrink-0">
                           <AvatarFallback className="bg-gradient-to-br from-cyan-400 to-blue-500 p-0 overflow-hidden">

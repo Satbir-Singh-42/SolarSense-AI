@@ -29,17 +29,9 @@ import {
   MapPin,
   Building,
   Home,
+  Loader2,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Loader2 } from "lucide-react";
-import Navbar from "@/components/navbar";
 import ValidationCard from "@/components/validation-card";
 
 type SignupForm = z.infer<typeof signupSchema>;
@@ -50,7 +42,7 @@ export default function SignupPage() {
   const [showValidationCard, setShowValidationCard] = useState(false);
   const [validationMessage, setValidationMessage] = useState("");
   const [validationType, setValidationType] = useState<"error" | "success">(
-    "error"
+    "error",
   );
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
@@ -108,15 +100,15 @@ export default function SignupPage() {
         // Handle registration errors
         if (errorMessage.includes("Email already registered")) {
           setValidationMessage(
-            "This email is already registered. Please use a different email or try logging in instead."
+            "This email is already registered. Please use a different email or try logging in instead.",
           );
         } else if (errorMessage.includes("Username already taken")) {
           setValidationMessage(
-            "This username is already taken. Please choose a different username."
+            "This username is already taken. Please choose a different username.",
           );
         } else {
           setValidationMessage(
-            "Registration failed. Please check your information and try again."
+            "Registration failed. Please check your information and try again.",
           );
         }
         setValidationType("error");
@@ -132,7 +124,7 @@ export default function SignupPage() {
   useEffect(() => {
     if (registerMutation.isSuccess) {
       setValidationMessage(
-        "Account created successfully! Welcome to SolarSense AI."
+        "Account created successfully! Welcome to SolarSense AI.",
       );
       setValidationType("success");
       setShowValidationCard(true);

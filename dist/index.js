@@ -35,7 +35,16 @@ __export(schema_exports, {
   users: () => users,
   usersRelations: () => usersRelations
 });
-import { pgTable, text, serial, integer, boolean, jsonb, timestamp } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  serial,
+  integer,
+  boolean,
+  jsonb,
+  timestamp,
+  index
+} from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -54,81 +63,110 @@ var init_schema = __esm({
       householdName: text("household_name"),
       createdAt: timestamp("created_at").defaultNow().notNull()
     });
-    households = pgTable("households", {
-      id: serial("id").primaryKey(),
-      userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-      name: text("name").notNull(),
-      address: text("address").notNull(),
-      solarCapacity: integer("solar_capacity_watts").notNull(),
-      // in watts
-      batteryCapacity: integer("battery_capacity_kwh").notNull(),
-      // in kWh
-      currentBatteryLevel: integer("current_battery_percent").notNull().default(50),
-      // 0-100
-      isOnline: boolean("is_online").notNull().default(true),
-      coordinates: jsonb("coordinates"),
-      // {lat, lng}
-      createdAt: timestamp("created_at").defaultNow().notNull()
-    });
-    energyReadings = pgTable("energy_readings", {
-      id: serial("id").primaryKey(),
-      householdId: integer("household_id").notNull().references(() => households.id, { onDelete: "cascade" }),
-      timestamp: timestamp("timestamp").defaultNow().notNull(),
-      solarGeneration: integer("solar_generation_watts").notNull(),
-      // current solar generation in watts
-      energyConsumption: integer("energy_consumption_watts").notNull(),
-      // current consumption in watts
-      batteryLevel: integer("battery_level_percent").notNull(),
-      // 0-100
-      weatherCondition: text("weather_condition"),
-      // 'sunny', 'cloudy', 'rainy', etc.
-      temperature: integer("temperature_celsius")
-    });
-    energyTrades = pgTable("energy_trades", {
-      id: serial("id").primaryKey(),
-      sellerHouseholdId: integer("seller_household_id").references(() => households.id, { onDelete: "set null" }),
-      buyerHouseholdId: integer("buyer_household_id").references(() => households.id, { onDelete: "set null" }),
-      energyAmount: integer("energy_amount_kwh").notNull(),
-      // in kWh
-      pricePerKwh: integer("price_per_kwh_rupees").notNull(),
-      // price in rupees
-      status: text("status").notNull().default("pending"),
-      // 'pending', 'accepted', 'in_progress', 'completed', 'cancelled'
-      tradeType: text("trade_type").notNull(),
-      // 'sell', 'buy'
-      createdAt: timestamp("created_at").defaultNow().notNull(),
-      completedAt: timestamp("completed_at")
-    });
-    tradeAcceptances = pgTable("trade_acceptances", {
-      id: serial("id").primaryKey(),
-      tradeId: integer("trade_id").notNull().references(() => energyTrades.id, { onDelete: "cascade" }),
-      acceptorUserId: integer("acceptor_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
-      acceptorHouseholdId: integer("acceptor_household_id").notNull().references(() => households.id, { onDelete: "cascade" }),
-      status: text("status").notNull().default("applied"),
-      // 'applied', 'withdrawn', 'awarded', 'owner_rejected', 'applicant_shared_contact', 'applicant_rejected', 'completed', 'cancelled'
-      contactShared: boolean("contact_shared").notNull().default(false),
-      acceptedAt: timestamp("accepted_at").defaultNow().notNull(),
-      completedAt: timestamp("completed_at")
-    });
-    chatMessages = pgTable("chat_messages", {
-      id: serial("id").primaryKey(),
-      userId: integer("user_id").references(() => users.id, { onDelete: "set null" }),
-      sessionId: text("session_id"),
-      // For non-authenticated users
-      username: text("username").notNull(),
-      message: text("message").notNull(),
-      type: text("type").notNull().default("user"),
-      // 'user', 'system', 'ai'
-      category: text("category").default("general"),
-      // 'energy', 'trading', 'optimization', 'general'
-      createdAt: timestamp("created_at").defaultNow().notNull()
-    });
-    userSessions = pgTable("user_sessions", {
-      sessionId: text("session_id").primaryKey(),
-      userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
-      createdAt: timestamp("created_at").defaultNow().notNull(),
-      expiresAt: timestamp("expires_at").notNull()
-    });
+    households = pgTable(
+      "households",
+      {
+        id: serial("id").primaryKey(),
+        userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+        name: text("name").notNull(),
+        address: text("address").notNull(),
+        solarCapacity: integer("solar_capacity_watts").notNull(),
+        batteryCapacity: integer("battery_capacity_kwh").notNull(),
+        currentBatteryLevel: integer("current_battery_percent").notNull().default(50),
+        isOnline: boolean("is_online").notNull().default(true),
+        coordinates: jsonb("coordinates"),
+        createdAt: timestamp("created_at").defaultNow().notNull()
+      },
+      (t) => [index("households_user_id_idx").on(t.userId)]
+    );
+    energyReadings = pgTable(
+      "energy_readings",
+      {
+        id: serial("id").primaryKey(),
+        householdId: integer("household_id").notNull().references(() => households.id, { onDelete: "cascade" }),
+        timestamp: timestamp("timestamp").defaultNow().notNull(),
+        solarGeneration: integer("solar_generation_watts").notNull(),
+        energyConsumption: integer("energy_consumption_watts").notNull(),
+        batteryLevel: integer("battery_level_percent").notNull(),
+        weatherCondition: text("weather_condition"),
+        temperature: integer("temperature_celsius")
+      },
+      (t) => [index("readings_household_ts_idx").on(t.householdId, t.timestamp)]
+    );
+    energyTrades = pgTable(
+      "energy_trades",
+      {
+        id: serial("id").primaryKey(),
+        sellerHouseholdId: integer("seller_household_id").references(
+          () => households.id,
+          { onDelete: "set null" }
+        ),
+        buyerHouseholdId: integer("buyer_household_id").references(
+          () => households.id,
+          { onDelete: "set null" }
+        ),
+        energyAmount: integer("energy_amount_kwh").notNull(),
+        pricePerKwh: integer("price_per_kwh_rupees").notNull(),
+        status: text("status").notNull().default("pending"),
+        tradeType: text("trade_type").notNull(),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+        completedAt: timestamp("completed_at")
+      },
+      (t) => [
+        index("trades_seller_idx").on(t.sellerHouseholdId),
+        index("trades_buyer_idx").on(t.buyerHouseholdId),
+        index("trades_status_idx").on(t.status)
+      ]
+    );
+    tradeAcceptances = pgTable(
+      "trade_acceptances",
+      {
+        id: serial("id").primaryKey(),
+        tradeId: integer("trade_id").notNull().references(() => energyTrades.id, { onDelete: "cascade" }),
+        acceptorUserId: integer("acceptor_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+        acceptorHouseholdId: integer("acceptor_household_id").notNull().references(() => households.id, { onDelete: "cascade" }),
+        status: text("status").notNull().default("applied"),
+        contactShared: boolean("contact_shared").notNull().default(false),
+        acceptedAt: timestamp("accepted_at").defaultNow().notNull(),
+        completedAt: timestamp("completed_at")
+      },
+      (t) => [
+        index("acceptances_trade_idx").on(t.tradeId),
+        index("acceptances_user_idx").on(t.acceptorUserId)
+      ]
+    );
+    chatMessages = pgTable(
+      "chat_messages",
+      {
+        id: serial("id").primaryKey(),
+        userId: integer("user_id").references(() => users.id, {
+          onDelete: "set null"
+        }),
+        sessionId: text("session_id"),
+        username: text("username").notNull(),
+        message: text("message").notNull(),
+        type: text("type").notNull().default("user"),
+        category: text("category").default("general"),
+        createdAt: timestamp("created_at").defaultNow().notNull()
+      },
+      (t) => [
+        index("chat_user_idx").on(t.userId),
+        index("chat_session_idx").on(t.sessionId)
+      ]
+    );
+    userSessions = pgTable(
+      "user_sessions",
+      {
+        sessionId: text("session_id").primaryKey(),
+        userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+        createdAt: timestamp("created_at").defaultNow().notNull(),
+        expiresAt: timestamp("expires_at").notNull()
+      },
+      (t) => [
+        index("sessions_user_idx").on(t.userId),
+        index("sessions_expires_idx").on(t.expiresAt)
+      ]
+    );
     usersRelations = relations(users, ({ many }) => ({
       households: many(households),
       chatMessages: many(chatMessages)
@@ -152,33 +190,39 @@ var init_schema = __esm({
         references: [households.id]
       })
     }));
-    energyTradesRelations = relations(energyTrades, ({ one, many }) => ({
-      sellerHousehold: one(households, {
-        fields: [energyTrades.sellerHouseholdId],
-        references: [households.id],
-        relationName: "sellerTrades"
-      }),
-      buyerHousehold: one(households, {
-        fields: [energyTrades.buyerHouseholdId],
-        references: [households.id],
-        relationName: "buyerTrades"
-      }),
-      acceptances: many(tradeAcceptances)
-    }));
-    tradeAcceptancesRelations = relations(tradeAcceptances, ({ one }) => ({
-      trade: one(energyTrades, {
-        fields: [tradeAcceptances.tradeId],
-        references: [energyTrades.id]
-      }),
-      acceptorUser: one(users, {
-        fields: [tradeAcceptances.acceptorUserId],
-        references: [users.id]
-      }),
-      acceptorHousehold: one(households, {
-        fields: [tradeAcceptances.acceptorHouseholdId],
-        references: [households.id]
+    energyTradesRelations = relations(
+      energyTrades,
+      ({ one, many }) => ({
+        sellerHousehold: one(households, {
+          fields: [energyTrades.sellerHouseholdId],
+          references: [households.id],
+          relationName: "sellerTrades"
+        }),
+        buyerHousehold: one(households, {
+          fields: [energyTrades.buyerHouseholdId],
+          references: [households.id],
+          relationName: "buyerTrades"
+        }),
+        acceptances: many(tradeAcceptances)
       })
-    }));
+    );
+    tradeAcceptancesRelations = relations(
+      tradeAcceptances,
+      ({ one }) => ({
+        trade: one(energyTrades, {
+          fields: [tradeAcceptances.tradeId],
+          references: [energyTrades.id]
+        }),
+        acceptorUser: one(users, {
+          fields: [tradeAcceptances.acceptorUserId],
+          references: [users.id]
+        }),
+        acceptorHousehold: one(households, {
+          fields: [tradeAcceptances.acceptorHouseholdId],
+          references: [households.id]
+        })
+      })
+    );
     chatMessagesRelations = relations(chatMessages, ({ one }) => ({
       user: one(users, {
         fields: [chatMessages.userId],
@@ -276,7 +320,10 @@ var init_schema = __esm({
         const domain = email.split("@")[1]?.toLowerCase();
         return !tempEmailDomains.includes(domain);
       }, "Please use a valid personal or business email address. Temporary email addresses are not allowed."),
-      password: z.string().min(8, "Password must be at least 8 characters").regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, "Password must contain at least one uppercase letter, one lowercase letter, and one number"),
+      password: z.string().min(8, "Password must be at least 8 characters").regex(
+        /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
+        "Password must contain at least one uppercase letter, one lowercase letter, and one number"
+      ),
       confirmPassword: z.string().min(1, "Please confirm your password"),
       // Contact information
       phone: z.string().min(10, "Phone number must be at least 10 digits"),
@@ -304,7 +351,9 @@ var init_schema = __esm({
       currentBatteryLevel: true,
       coordinates: true
     });
-    insertEnergyReadingSchema = createInsertSchema(energyReadings).pick({
+    insertEnergyReadingSchema = createInsertSchema(
+      energyReadings
+    ).pick({
       householdId: true,
       solarGeneration: true,
       energyConsumption: true,
@@ -318,17 +367,20 @@ var init_schema = __esm({
       energyAmount: true,
       pricePerKwh: true,
       tradeType: true
-    }).partial({ sellerHouseholdId: true, buyerHouseholdId: true }).refine((data) => {
-      if (data.tradeType === "sell" && !data.sellerHouseholdId) {
-        return false;
+    }).partial({ sellerHouseholdId: true, buyerHouseholdId: true }).refine(
+      (data) => {
+        if (data.tradeType === "sell" && !data.sellerHouseholdId) {
+          return false;
+        }
+        if (data.tradeType === "buy" && !data.buyerHouseholdId) {
+          return false;
+        }
+        return true;
+      },
+      {
+        message: "Either seller or buyer household ID must be provided based on trade type"
       }
-      if (data.tradeType === "buy" && !data.buyerHouseholdId) {
-        return false;
-      }
-      return true;
-    }, {
-      message: "Either seller or buyer household ID must be provided based on trade type"
-    });
+    );
     insertChatMessageSchema = createInsertSchema(chatMessages).pick({
       userId: true,
       sessionId: true,
@@ -337,14 +389,23 @@ var init_schema = __esm({
       type: true,
       category: true
     });
-    insertTradeAcceptanceSchema = createInsertSchema(tradeAcceptances).pick({
+    insertTradeAcceptanceSchema = createInsertSchema(
+      tradeAcceptances
+    ).pick({
       tradeId: true,
       acceptorUserId: true,
       acceptorHouseholdId: true,
       status: true
     });
     simulationWeatherSchema = z.object({
-      condition: z.enum(["sunny", "partly-cloudy", "cloudy", "overcast", "rainy", "stormy"])
+      condition: z.enum([
+        "sunny",
+        "partly-cloudy",
+        "cloudy",
+        "overcast",
+        "rainy",
+        "stormy"
+      ])
     });
     simulationOutageSchema = z.object({
       householdIds: z.array(z.number().int().positive()).optional().default([])
@@ -361,36 +422,28 @@ __export(db_exports, {
 });
 import { Pool } from "pg";
 import { drizzle } from "drizzle-orm/node-postgres";
-function getDatabaseUrl() {
-  let databaseUrl = process.env.DATABASE_URL;
-  if (databaseUrl) {
-    console.log("Found DATABASE_URL:", databaseUrl.substring(0, 60) + "...");
-    return databaseUrl;
-  }
-  console.log("DATABASE_URL not found in environment");
-  return null;
-}
 async function initializeDatabase() {
-  const databaseUrl = getDatabaseUrl();
-  if (databaseUrl) {
-    console.log("Using DATABASE_URL:", databaseUrl.substring(0, 50) + "...");
-    try {
-      pool = new Pool({
-        connectionString: databaseUrl,
-        ssl: databaseUrl.includes("sslmode=require") ? { rejectUnauthorized: false } : false
-      });
-      db = drizzle(pool, { schema: schema_exports });
-      await pool.query("SELECT 1");
-      console.log("Database connected successfully");
-      return true;
-    } catch (error) {
-      console.warn("Database connection failed, using memory storage:", error instanceof Error ? error.message : String(error));
-      db = null;
-      pool = null;
-      return false;
-    }
-  } else {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
     console.log("No DATABASE_URL found, using memory storage");
+    return false;
+  }
+  try {
+    pool = new Pool({
+      connectionString: databaseUrl,
+      ssl: databaseUrl.includes("sslmode=require") ? { rejectUnauthorized: false } : false,
+      max: 20,
+      idleTimeoutMillis: 3e4,
+      connectionTimeoutMillis: 5e3
+    });
+    db = drizzle(pool, { schema: schema_exports });
+    await pool.query("SELECT 1");
+    console.log("Database connected successfully");
+    return true;
+  } catch (error) {
+    console.warn("Database connection failed:", error instanceof Error ? error.message : String(error));
+    db = null;
+    pool = null;
     return false;
   }
 }
@@ -401,7 +454,6 @@ var init_db = __esm({
     init_schema();
     db = null;
     pool = null;
-    initializeDatabase().catch(console.error);
   }
 });
 
@@ -412,7 +464,17 @@ import cookieParser from "cookie-parser";
 
 // server/storage.ts
 init_schema();
-import { eq, desc, count, and, or, sql, inArray, isNull, not } from "drizzle-orm";
+import {
+  eq,
+  desc,
+  count,
+  and,
+  or,
+  sql,
+  inArray,
+  isNull,
+  not
+} from "drizzle-orm";
 
 // server/weather-service.ts
 var WeatherService = class {
@@ -428,28 +490,14 @@ var WeatherService = class {
     }
     try {
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${location.latitude}&longitude=${location.longitude}&current_weather=true&daily=sunrise,sunset&hourly=temperature_2m,relative_humidity_2m,cloud_cover,wind_speed_10m,uv_index&timezone=auto`;
-      const DEBUG_WEATHER = process.env.DEBUG_WEATHER === "true";
-      if (DEBUG_WEATHER) {
-        console.log(`\u{1F324}\uFE0F Fetching REAL weather from Open-Meteo API for coordinates: ${location.latitude}, ${location.longitude}`);
-      } else {
-        console.log(`\u{1F324}\uFE0F Fetching REAL weather from Open-Meteo API`);
-      }
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error("Weather API request timeout")), 1e4);
-      });
-      const fetchPromise = fetch(url, {
+      const response = await fetch(url, {
         signal: AbortSignal.timeout(8e3),
-        // 8 second fetch timeout
-        headers: {
-          "User-Agent": "SolarSense-App/1.0"
-        }
+        headers: { "User-Agent": "SolarSense-App/1.0" }
       });
-      const response = await Promise.race([fetchPromise, timeoutPromise]);
       if (!response.ok) {
         throw new Error(`Weather API error: ${response.status}`);
       }
       const data = await response.json();
-      console.log(`\u{1F324}\uFE0F Real weather API response:`, JSON.stringify(data.current_weather, null, 2));
       const current = data.current_weather;
       const hourly = data.hourly;
       const daily = data.daily;
@@ -457,11 +505,9 @@ var WeatherService = class {
       const currentHour = currentTime.getHours();
       const todaySunrise = new Date(daily.sunrise[0]).getTime();
       const todaySunset = new Date(daily.sunset[0]).getTime();
-      const currentTimestamp = currentTime.getTime();
       const isDay = current.is_day === 1;
       const weatherCode = typeof current.weathercode === "number" ? current.weathercode : typeof current.weather_code === "number" ? current.weather_code : null;
       let condition;
-      console.log(`\u{1F324}\uFE0F Weather code mapping: weatherCode=${weatherCode}, isDay=${isDay}`);
       if (weatherCode !== null) {
         if (weatherCode <= 1) condition = "sunny";
         else if (weatherCode <= 3) condition = "partly-cloudy";
@@ -470,7 +516,6 @@ var WeatherService = class {
         else if (weatherCode <= 82) condition = "rainy";
         else condition = "stormy";
       } else {
-        console.warn(`\u26A0\uFE0F Weather code undefined, defaulting to neutral condition`);
         condition = isDay ? "partly-cloudy" : "cloudy";
       }
       if (!isDay && condition === "sunny") {
@@ -492,10 +537,15 @@ var WeatherService = class {
       this.cache.set(cacheKey, { data: weatherData, timestamp: Date.now() });
       return weatherData;
     } catch (error) {
-      console.warn("\u26A0\uFE0F Weather API request failed:", error);
-      console.warn("\u{1F4CA} Using fallback weather data to ensure market calculations continue");
-      const fallbackWeather = this.generateFallbackWeather(location, Date.now());
-      this.cache.set(cacheKey, { data: fallbackWeather, timestamp: Date.now() });
+      console.warn("Weather API failed, using fallback data");
+      const fallbackWeather = this.generateFallbackWeather(
+        location,
+        Date.now()
+      );
+      this.cache.set(cacheKey, {
+        data: fallbackWeather,
+        timestamp: Date.now()
+      });
       return fallbackWeather;
     }
   }
@@ -549,13 +599,21 @@ var WeatherService = class {
     };
   }
   calculateSunTimes(location, date) {
-    const dayOfYear = Math.floor((date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 864e5);
+    const dayOfYear = Math.floor(
+      (date.getTime() - new Date(date.getFullYear(), 0, 0).getTime()) / 864e5
+    );
     const solarDeclination = 23.45 * Math.sin(360 * (284 + dayOfYear) / 365 * Math.PI / 180);
-    const hourAngle = Math.acos(-Math.tan(location.latitude * Math.PI / 180) * Math.tan(solarDeclination * Math.PI / 180));
+    const hourAngle = Math.acos(
+      -Math.tan(location.latitude * Math.PI / 180) * Math.tan(solarDeclination * Math.PI / 180)
+    );
     const solarNoon = 12 - location.longitude / 15;
     const sunriseHour = solarNoon - hourAngle * 180 / Math.PI / 15;
     const sunsetHour = solarNoon + hourAngle * 180 / Math.PI / 15;
-    const baseDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const baseDate = new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate()
+    );
     return {
       sunrise: baseDate.getTime() + sunriseHour * 60 * 60 * 1e3,
       sunset: baseDate.getTime() + sunsetHour * 60 * 60 * 1e3
@@ -569,16 +627,19 @@ var WeatherService = class {
     const timeInDay = (currentTime - weather.sunrise) / (weather.sunset - weather.sunrise);
     const sunAngleMultiplier = Math.sin(timeInDay * Math.PI);
     const conditionMultipliers = {
-      "sunny": 1,
+      sunny: 1,
       "partly-cloudy": 0.82,
-      "cloudy": 0.45,
-      "overcast": 0.25,
-      "rainy": 0.15,
-      "stormy": 0.08
+      cloudy: 0.45,
+      overcast: 0.25,
+      rainy: 0.15,
+      stormy: 0.08
     };
     const cloudImpact = Math.max(0.1, 1 - weather.cloudCover / 100 * 0.7);
     const tempImpact = weather.temperature <= 25 ? 1 : Math.max(0.7, 1 - (weather.temperature - 25) * 4e-3);
-    return Math.max(0, conditionMultipliers[weather.condition] * sunAngleMultiplier * cloudImpact * tempImpact);
+    return Math.max(
+      0,
+      conditionMultipliers[weather.condition] * sunAngleMultiplier * cloudImpact * tempImpact
+    );
   }
 };
 var weatherService = new WeatherService();
@@ -587,9 +648,7 @@ var weatherService = new WeatherService();
 import session from "express-session";
 import createMemoryStore from "memorystore";
 import connectPg from "connect-pg-simple";
-import { config } from "dotenv";
-config();
-function getDatabaseUrl2() {
+function getDatabaseUrl() {
   let dbUrl = process.env.DATABASE_URL || null;
   if (dbUrl) {
     dbUrl = dbUrl.replace(/^psql\s*['"]*/, "").replace(/['"]*$/, "");
@@ -641,9 +700,7 @@ var MemStorage = class {
     );
   }
   async getUserByEmail(email) {
-    return Array.from(this.users.values()).find(
-      (user) => user.email === email
-    );
+    return Array.from(this.users.values()).find((user) => user.email === email);
   }
   async createUser(insertUser) {
     const id = this.currentUserId++;
@@ -750,11 +807,15 @@ var MemStorage = class {
     });
   }
   async getEnergyTradesByHousehold(householdId, limit = 50) {
-    const trades = Array.from(this.energyTrades.values()).filter((trade) => trade.sellerHouseholdId === householdId || trade.buyerHouseholdId === householdId).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+    const trades = Array.from(this.energyTrades.values()).filter(
+      (trade) => trade.sellerHouseholdId === householdId || trade.buyerHouseholdId === householdId
+    ).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     return trades.slice(0, limit);
   }
   async getEnergyTradesByUser(userId, limit = 50) {
-    const userHouseholds = Array.from(this.households.values()).filter((h) => h.userId === userId);
+    const userHouseholds = Array.from(this.households.values()).filter(
+      (h) => h.userId === userId
+    );
     const householdIds = userHouseholds.map((h) => h.id);
     const trades = Array.from(this.energyTrades.values()).filter(
       (trade) => (householdIds.includes(trade.sellerHouseholdId || -1) || householdIds.includes(trade.buyerHouseholdId || -1)) && // Only include pending trades - once awarded/completed/cancelled, no longer "active" for the creator
@@ -801,7 +862,9 @@ var MemStorage = class {
     return message;
   }
   async getChatMessages(limit = 50) {
-    const messages = Array.from(this.chatMessages.values()).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const messages = Array.from(this.chatMessages.values()).sort(
+      (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
+    );
     return messages.slice(-limit);
   }
   async getChatMessagesByUser(userId, limit = 50) {
@@ -820,11 +883,15 @@ var MemStorage = class {
     }
   }
   async getEnergyReadings(limit = 50) {
-    const readings = Array.from(this.energyReadings.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    const readings = Array.from(this.energyReadings.values()).sort(
+      (a, b) => b.timestamp.getTime() - a.timestamp.getTime()
+    );
     return readings.slice(0, limit);
   }
   async getRealtimeMarketData(latitude, longitude) {
-    throw new Error("Memory storage fallback - real-time market data requires database connection");
+    throw new Error(
+      "Memory storage fallback - real-time market data requires database connection"
+    );
   }
   async getNetworkAnalytics() {
     const totalHouseholds = this.households.size;
@@ -837,7 +904,7 @@ var MemStorage = class {
         totalGenerationCapacity: "0kW",
         // Show 0 instead of null
         totalStorageCapacity: "0kWh",
-        // Show 0 instead of null  
+        // Show 0 instead of null
         currentBatteryStorage: "0kWh",
         // Show 0 instead of null
         storageUtilization: "0%"
@@ -916,7 +983,9 @@ var MemStorage = class {
     return this.tradeAcceptances.delete(id);
   }
   async getAvailableOffersForUser(userId) {
-    const userHouseholds = Array.from(this.households.values()).filter((h) => h.userId === userId);
+    const userHouseholds = Array.from(this.households.values()).filter(
+      (h) => h.userId === userId
+    );
     const householdIds = userHouseholds.map((h) => h.id);
     const availableOffers = Array.from(this.energyTrades.values()).filter(
       (trade) => trade.status === "pending" && trade.sellerHouseholdId && !householdIds.includes(trade.sellerHouseholdId) && (!trade.buyerHouseholdId || !householdIds.includes(trade.buyerHouseholdId))
@@ -938,7 +1007,9 @@ var MemStorage = class {
     return availableOffers;
   }
   async getApplicationsToMyTrades(userId) {
-    const userHouseholds = Array.from(this.households.values()).filter((h) => h.userId === userId);
+    const userHouseholds = Array.from(this.households.values()).filter(
+      (h) => h.userId === userId
+    );
     const householdIds = userHouseholds.map((h) => h.id);
     if (householdIds.length === 0) {
       return [];
@@ -950,7 +1021,9 @@ var MemStorage = class {
       const isMyTrade = trade.tradeType === "sell" && trade.sellerHouseholdId && householdIds.includes(trade.sellerHouseholdId) || trade.tradeType === "buy" && trade.buyerHouseholdId && householdIds.includes(trade.buyerHouseholdId);
       if (isMyTrade) {
         const applicant = this.users.get(acceptance.acceptorUserId);
-        const applicantHousehold = Array.from(this.households.values()).find((h) => h.userId === applicant?.id);
+        const applicantHousehold = Array.from(this.households.values()).find(
+          (h) => h.userId === applicant?.id
+        );
         applications.push({
           acceptance,
           trade,
@@ -969,7 +1042,9 @@ var MemStorage = class {
         });
       }
     }
-    return applications.sort((a, b) => new Date(b.acceptance.acceptedAt).getTime() - new Date(a.acceptance.acceptedAt).getTime());
+    return applications.sort(
+      (a, b) => new Date(b.acceptance.acceptedAt).getTime() - new Date(a.acceptance.acceptedAt).getTime()
+    );
   }
   async shareContactInfo(acceptanceId) {
     const acceptance = this.tradeAcceptances.get(acceptanceId);
@@ -1018,7 +1093,10 @@ var DatabaseStorage = class {
         console.log("Memory session store initialized (fallback)");
       }
     } catch (error) {
-      console.warn("Session store initialization failed, using memory fallback:", error);
+      console.warn(
+        "Session store initialization failed, using memory fallback:",
+        error
+      );
       const MemoryStore = await import("memorystore").then((m) => m.default);
       this.sessionStore = new (MemoryStore(session))({
         checkPeriod: 864e5
@@ -1105,6 +1183,7 @@ var DatabaseStorage = class {
       solarCapacity: row.solarCapacity,
       batteryCapacity: row.batteryCapacity,
       currentBatteryLevel: row.currentBatteryLevel,
+      isOnline: true,
       coordinates: row.coordinates,
       createdAt: row.createdAt,
       user: {
@@ -1142,7 +1221,7 @@ var DatabaseStorage = class {
       energyAmount: energyTrades.energyAmount,
       // This maps to energy_amount_kwh in DB
       pricePerKwh: energyTrades.pricePerKwh,
-      // This maps to price_per_kwh_cents in DB  
+      // This maps to price_per_kwh_cents in DB
       status: energyTrades.status,
       tradeType: energyTrades.tradeType,
       createdAt: energyTrades.createdAt,
@@ -1160,14 +1239,19 @@ var DatabaseStorage = class {
     const acceptanceCounts = tradeIds.length > 0 ? await db2.select({
       tradeId: tradeAcceptances.tradeId,
       count: sql`count(*)`
-    }).from(tradeAcceptances).where(and(
-      inArray(tradeAcceptances.tradeId, tradeIds),
-      inArray(tradeAcceptances.status, ["accepted", "pending"])
-    )).groupBy(tradeAcceptances.tradeId) : [];
-    const countMap = acceptanceCounts.reduce((map, item) => {
-      map[item.tradeId] = item.count;
-      return map;
-    }, {});
+    }).from(tradeAcceptances).where(
+      and(
+        inArray(tradeAcceptances.tradeId, tradeIds),
+        inArray(tradeAcceptances.status, ["accepted", "pending"])
+      )
+    ).groupBy(tradeAcceptances.tradeId) : [];
+    const countMap = acceptanceCounts.reduce(
+      (map, item) => {
+        map[item.tradeId] = item.count;
+        return map;
+      },
+      {}
+    );
     return tradesQuery.map((trade) => ({
       ...trade,
       acceptanceCount: countMap[trade.id] || 0
@@ -1260,28 +1344,58 @@ var DatabaseStorage = class {
     try {
       const DEBUG_LOCATION = process.env.DEBUG_LOCATION === "true";
       if (DEBUG_LOCATION) {
-        console.log(`\u{1F30D} Fetching real-time weather for location: ${latitude}, ${longitude}`);
+        console.log(
+          `\u{1F30D} Fetching real-time weather for location: ${latitude}, ${longitude}`
+        );
       } else {
         console.log(`\u{1F30D} Fetching real-time weather for user location`);
       }
-      const realWeatherData = await weatherService.getCurrentWeather({ latitude, longitude });
+      const realWeatherData = await weatherService.getCurrentWeather({
+        latitude,
+        longitude
+      });
       console.log(`\u{1F324}\uFE0F Real weather for market data:`, realWeatherData);
       const recentTrades = await db2.select().from(energyTrades).orderBy(desc(energyTrades.createdAt)).limit(10);
       const recentReadings = await db2.select().from(energyReadings).orderBy(desc(energyReadings.timestamp)).limit(5);
       const allHouseholds = await db2.select().from(households);
-      const baseGenerationCapacity = allHouseholds.reduce((total, h) => total + (h.solarCapacity || 0), 0) / 1e3;
-      const cloudCoverImpact = Math.max(0.1, 1 - realWeatherData.cloudCover / 100 * 0.6);
+      const baseGenerationCapacity = allHouseholds.reduce(
+        (total, h) => total + (h.solarCapacity || 0),
+        0
+      ) / 1e3;
+      const cloudCoverImpact = Math.max(
+        0.1,
+        1 - realWeatherData.cloudCover / 100 * 0.6
+      );
       const tempImpact = realWeatherData.temperature > 25 ? Math.max(0.7, 1 - (realWeatherData.temperature - 25) * 0.01) : 1;
       const dayNightImpact = realWeatherData.isDay ? 1 : 0;
       const weatherMultiplier = cloudCoverImpact * tempImpact * dayNightImpact;
-      const activeSellTrades = await db2.select().from(energyTrades).where(and(eq(energyTrades.tradeType, "sell"), eq(energyTrades.status, "pending")));
-      const availableTradeSupply = activeSellTrades.reduce((total, trade) => total + trade.energyAmount, 0);
+      const activeSellTrades = await db2.select().from(energyTrades).where(
+        and(
+          eq(energyTrades.tradeType, "sell"),
+          eq(energyTrades.status, "pending")
+        )
+      );
+      const availableTradeSupply = activeSellTrades.reduce(
+        (total, trade) => total + trade.energyAmount,
+        0
+      );
       const weatherSupply = baseGenerationCapacity > 0 ? Math.round(baseGenerationCapacity * weatherMultiplier) : 0;
       const realtimeSupply = availableTradeSupply;
-      const activeBuyTrades = await db2.select().from(energyTrades).where(and(eq(energyTrades.tradeType, "buy"), eq(energyTrades.status, "pending")));
-      const activeDemand = activeBuyTrades.reduce((total, trade) => total + trade.energyAmount, 0);
+      const activeBuyTrades = await db2.select().from(energyTrades).where(
+        and(
+          eq(energyTrades.tradeType, "buy"),
+          eq(energyTrades.status, "pending")
+        )
+      );
+      const activeDemand = activeBuyTrades.reduce(
+        (total, trade) => total + trade.energyAmount,
+        0
+      );
       const realtimeDemand = activeDemand;
-      const gridStability = realtimeDemand > 0 ? Math.max(10, Math.min(100, 50 + (realtimeSupply / realtimeDemand - 1) * 100)) : 100;
+      const gridStability = realtimeDemand > 0 ? Math.max(
+        10,
+        Math.min(100, 50 + (realtimeSupply / realtimeDemand - 1) * 100)
+      ) : 100;
       const solarEfficiency = Math.round(weatherMultiplier * 100);
       let aiEnhancedData = {};
       const cacheKey = `${Math.round(latitude * 100)}_${Math.round(longitude * 100)}_${realWeatherData.condition}`;
@@ -1306,21 +1420,34 @@ var DatabaseStorage = class {
             3. Optimal trading time recommendations
             
             Return JSON: {"insight": "text", "trend": "up/down/stable", "optimal_time": "morning/afternoon/evening"}`;
-            const model = genAI2.getGenerativeModel({ model: "gemini-2.0-flash" });
+            const model = genAI2.getGenerativeModel({
+              model: "gemini-2.0-flash"
+            });
             const result = await model.generateContent(marketPrompt);
             const response = await result.response;
             const text2 = response.text();
             if (text2) {
-              aiEnhancedData = JSON.parse(text2.replace(/```json\n?|```\n?/g, "").trim());
-              this.constructor.aiInsightCache.set(cacheKey, {
-                data: aiEnhancedData,
-                timestamp: Date.now()
-              });
-              console.log(`\u{1F916} Gemini AI market insight (fresh):`, aiEnhancedData);
+              aiEnhancedData = JSON.parse(
+                text2.replace(/```json\n?|```\n?/g, "").trim()
+              );
+              this.constructor.aiInsightCache.set(
+                cacheKey,
+                {
+                  data: aiEnhancedData,
+                  timestamp: Date.now()
+                }
+              );
+              console.log(
+                `\u{1F916} Gemini AI market insight (fresh):`,
+                aiEnhancedData
+              );
             }
           }
         } catch (error) {
-          console.log(`\u{1F916} Gemini AI enhancement skipped:`, error?.message || String(error));
+          console.log(
+            `\u{1F916} Gemini AI enhancement skipped:`,
+            error?.message || String(error)
+          );
           aiEnhancedData = {
             insight: `${realtimeSupply < realtimeDemand ? "High demand may increase prices" : "Stable supply-demand balance"}. Weather: ${realWeatherData.condition}.`,
             trend: realtimeSupply < realtimeDemand ? "up" : "stable",
@@ -1329,10 +1456,16 @@ var DatabaseStorage = class {
         }
       }
       console.log(`\u26A1 Real-time market calculation:`);
-      console.log(`   Weather Supply: ${weatherSupply} kW (${realWeatherData.condition}, ${Math.round(weatherMultiplier * 100)}%)`);
-      console.log(`   Trade Supply: ${availableTradeSupply} kW from ${activeSellTrades.length} pending sell trades`);
+      console.log(
+        `   Weather Supply: ${weatherSupply} kW (${realWeatherData.condition}, ${Math.round(weatherMultiplier * 100)}%)`
+      );
+      console.log(
+        `   Trade Supply: ${availableTradeSupply} kW from ${activeSellTrades.length} pending sell trades`
+      );
       console.log(`   Total Supply: ${realtimeSupply} kW`);
-      console.log(`   Trade Demand: ${activeDemand} kW from ${activeBuyTrades.length} pending buy trades`);
+      console.log(
+        `   Trade Demand: ${activeDemand} kW from ${activeBuyTrades.length} pending buy trades`
+      );
       console.log(`   Total Demand: ${realtimeDemand} kW`);
       console.log(`   Grid Stability: ${Math.round(gridStability)}%`);
       console.log(`   Solar Efficiency: ${solarEfficiency}%`);
@@ -1354,8 +1487,14 @@ var DatabaseStorage = class {
     } catch (error) {
       console.error("Failed to get real-time weather, using fallback:", error);
       const recentReadings = await db2.select().from(energyReadings).orderBy(desc(energyReadings.timestamp)).limit(5);
-      const totalSupply = recentReadings.reduce((sum, reading) => sum + reading.solarGeneration, 0);
-      const totalDemand = recentReadings.reduce((sum, reading) => sum + reading.energyConsumption, 0);
+      const totalSupply = recentReadings.reduce(
+        (sum, reading) => sum + reading.solarGeneration,
+        0
+      );
+      const totalDemand = recentReadings.reduce(
+        (sum, reading) => sum + reading.energyConsumption,
+        0
+      );
       const latestReading = recentReadings[0];
       const weather = latestReading ? {
         condition: latestReading.weatherCondition || "sunny",
@@ -1366,7 +1505,10 @@ var DatabaseStorage = class {
         temperature: 25,
         efficiency: 85
       };
-      const gridStability = Math.max(0, Math.min(100, 100 - Math.abs(totalSupply - totalDemand) / 10));
+      const gridStability = Math.max(
+        0,
+        Math.min(100, 100 - Math.abs(totalSupply - totalDemand) / 10)
+      );
       return {
         supply: totalSupply || 120,
         demand: totalDemand || 100,
@@ -1382,34 +1524,60 @@ var DatabaseStorage = class {
     const tradeCount = await db2.select({ count: count() }).from(energyTrades);
     const totalTrades = tradeCount[0]?.count || 0;
     const allHouseholds = await db2.select().from(households);
-    const totalGeneration = allHouseholds.reduce((sum, h) => sum + (h.solarCapacity || 0), 0);
-    const totalStorage = allHouseholds.reduce((sum, h) => sum + (h.batteryCapacity || 0), 0);
-    const recentTrades = await db2.select().from(energyTrades).where(or(
-      eq(energyTrades.status, "pending"),
-      // Include pending offers
-      eq(energyTrades.status, "accepted"),
-      // Include accepted trades
-      eq(energyTrades.status, "completed"),
-      // Include successful trades
-      eq(energyTrades.status, "in_progress")
-      // Include active trades
-    )).orderBy(desc(energyTrades.createdAt)).limit(10);
-    const validTrades = recentTrades.filter((trade) => trade.pricePerKwh <= 1e3 && trade.pricePerKwh >= 1);
+    const totalGeneration = allHouseholds.reduce(
+      (sum, h) => sum + (h.solarCapacity || 0),
+      0
+    );
+    const totalStorage = allHouseholds.reduce(
+      (sum, h) => sum + (h.batteryCapacity || 0),
+      0
+    );
+    const recentTrades = await db2.select().from(energyTrades).where(
+      or(
+        eq(energyTrades.status, "pending"),
+        // Include pending offers
+        eq(energyTrades.status, "accepted"),
+        // Include accepted trades
+        eq(energyTrades.status, "completed"),
+        // Include successful trades
+        eq(energyTrades.status, "in_progress")
+        // Include active trades
+      )
+    ).orderBy(desc(energyTrades.createdAt)).limit(10);
+    const validTrades = recentTrades.filter(
+      (trade) => trade.pricePerKwh <= 1e3 && trade.pricePerKwh >= 1
+    );
     const today = /* @__PURE__ */ new Date();
-    const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    const startOfDay = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate()
+    );
+    const endOfDay = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate() + 1
+    );
     const todaysTrades = validTrades.filter((trade) => {
       const tradeDate = new Date(trade.createdAt);
       return tradeDate >= startOfDay && tradeDate < endOfDay;
     });
-    const avgPriceNum = validTrades.length > 0 ? Math.round(validTrades.reduce((sum, trade) => sum + trade.pricePerKwh, 0) / validTrades.length) : 0;
+    const avgPriceNum = validTrades.length > 0 ? Math.round(
+      validTrades.reduce(
+        (sum, trade) => sum + trade.pricePerKwh,
+        0
+      ) / validTrades.length
+    ) : 0;
     const onlineHouseholdCount = await db2.select({ count: count() }).from(households).where(eq(households.isOnline, true));
     const activeHouseholds = onlineHouseholdCount[0]?.count || 0;
-    const currentBatteryStorage = allHouseholds.reduce((sum, h) => {
-      const capacity = h.batteryCapacity || 0;
-      const percent = h.currentBatteryLevel || 0;
-      return sum + capacity * percent / 100;
-    }, 0);
+    const currentBatteryStorage = allHouseholds.reduce(
+      (sum, h) => {
+        const capacity = h.batteryCapacity || 0;
+        const percent = h.currentBatteryLevel || 0;
+        return sum + capacity * percent / 100;
+      },
+      0
+    );
     return {
       network: {
         totalHouseholds,
@@ -1427,8 +1595,15 @@ var DatabaseStorage = class {
         // Only calculate from today's trades
       },
       efficiency: {
-        networkEfficiency: this.calculateNetworkEfficiency(totalGeneration, currentBatteryStorage, totalTrades),
-        averageDistance: this.calculateAverageTradeDistance(validTrades, allHouseholds)
+        networkEfficiency: this.calculateNetworkEfficiency(
+          totalGeneration,
+          currentBatteryStorage,
+          totalTrades
+        ),
+        averageDistance: this.calculateAverageTradeDistance(
+          validTrades,
+          allHouseholds
+        )
       }
     };
   }
@@ -1441,8 +1616,12 @@ var DatabaseStorage = class {
     const activeHouseholds = 8;
     const baseEfficiency = households2 > 0 ? activeHouseholds / households2 * 70 : 0;
     const tradingBonus = Math.min(20, totalTrades * 5);
-    const efficiency = Math.round(Math.max(0, Math.min(100, baseEfficiency + tradingBonus)));
-    console.log(`\u{1F4CA} Calculated efficiency: ${baseEfficiency} + ${tradingBonus} = ${efficiency}%`);
+    const efficiency = Math.round(
+      Math.max(0, Math.min(100, baseEfficiency + tradingBonus))
+    );
+    console.log(
+      `\u{1F4CA} Calculated efficiency: ${baseEfficiency} + ${tradingBonus} = ${efficiency}%`
+    );
     return `${efficiency}%`;
   }
   calculateAverageTradeDistance(validTrades, allHouseholds) {
@@ -1478,11 +1657,13 @@ var DatabaseStorage = class {
   async getSessionUser(sessionId) {
     const db2 = await this.getDb();
     const now = /* @__PURE__ */ new Date();
-    const [session2] = await db2.select({ userId: userSessions.userId }).from(userSessions).where(and(
-      eq(userSessions.sessionId, sessionId),
-      // Check if session hasn't expired (use sql for comparison)
-      sql`expires_at > NOW()`
-    ));
+    const [session2] = await db2.select({ userId: userSessions.userId }).from(userSessions).where(
+      and(
+        eq(userSessions.sessionId, sessionId),
+        // Check if session hasn't expired (use sql for comparison)
+        sql`expires_at > NOW()`
+      )
+    );
     if (!session2) return null;
     const user = await this.getUser(session2.userId);
     return user || null;
@@ -1622,15 +1803,25 @@ var DatabaseStorage = class {
     const acceptanceCounts = tradeIds.length > 0 ? await db2.select({
       tradeId: tradeAcceptances.tradeId,
       count: sql`count(*)`
-    }).from(tradeAcceptances).where(and(
-      inArray(tradeAcceptances.tradeId, tradeIds),
-      // Count ALL active applications (use actual database status values)
-      inArray(tradeAcceptances.status, ["applied", "accepted", "contact_shared", "pending"])
-    )).groupBy(tradeAcceptances.tradeId) : [];
-    const countMap = acceptanceCounts.reduce((map, item) => {
-      map[item.tradeId] = item.count;
-      return map;
-    }, {});
+    }).from(tradeAcceptances).where(
+      and(
+        inArray(tradeAcceptances.tradeId, tradeIds),
+        // Count ALL active applications (use actual database status values)
+        inArray(tradeAcceptances.status, [
+          "applied",
+          "accepted",
+          "contact_shared",
+          "pending"
+        ])
+      )
+    ).groupBy(tradeAcceptances.tradeId) : [];
+    const countMap = acceptanceCounts.reduce(
+      (map, item) => {
+        map[item.tradeId] = item.count;
+        return map;
+      },
+      {}
+    );
     return availableOffers.map((offer) => ({
       ...offer,
       acceptanceCount: countMap[offer.trade.id] || 0
@@ -1721,14 +1912,19 @@ var HybridStorage = class {
       await new Promise((resolve) => setTimeout(resolve, 2e3));
       const connectionTest = Promise.race([
         this.databaseStorage.getUser(1),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Connection timeout")), 5e3))
+        new Promise(
+          (_, reject) => setTimeout(() => reject(new Error("Connection timeout")), 5e3)
+        )
       ]);
       await connectionTest;
       this.isDatabaseAvailable = true;
       console.log("\u2713 Database connection verified - using PostgreSQL storage");
       this.sessionStore = this.databaseStorage.sessionStore;
     } catch (error) {
-      console.warn("Database connection failed, using memory storage:", error instanceof Error ? error.message : "Unknown error");
+      console.warn(
+        "Database connection failed, using memory storage:",
+        error instanceof Error ? error.message : "Unknown error"
+      );
       this.isDatabaseAvailable = false;
       this.databaseStorage = null;
     }
@@ -1749,7 +1945,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getUserByUsername(username);
       } catch (error) {
-        console.warn("Database getUserByUsername failed, falling back to memory:", error);
+        console.warn(
+          "Database getUserByUsername failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1760,7 +1959,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getUserByEmail(email);
       } catch (error) {
-        console.warn("Database getUserByEmail failed, falling back to memory:", error);
+        console.warn(
+          "Database getUserByEmail failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1771,7 +1973,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.createUser(user);
       } catch (error) {
-        console.warn("Database createUser failed, falling back to memory:", error);
+        console.warn(
+          "Database createUser failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1782,7 +1987,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.createHousehold(household);
       } catch (error) {
-        console.warn("Database createHousehold failed, falling back to memory:", error);
+        console.warn(
+          "Database createHousehold failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1793,7 +2001,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getHouseholdsByUser(userId);
       } catch (error) {
-        console.warn("Database getHouseholdsByUser failed, falling back to memory:", error);
+        console.warn(
+          "Database getHouseholdsByUser failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1804,7 +2015,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getHousehold(id);
       } catch (error) {
-        console.warn("Database getHousehold failed, falling back to memory:", error);
+        console.warn(
+          "Database getHousehold failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1815,7 +2029,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.updateHousehold(id, updates);
       } catch (error) {
-        console.warn("Database updateHousehold failed, falling back to memory:", error);
+        console.warn(
+          "Database updateHousehold failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1826,7 +2043,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getHouseholdsWithUsers();
       } catch (error) {
-        console.warn("Database getHouseholdsWithUsers failed, falling back to memory:", error);
+        console.warn(
+          "Database getHouseholdsWithUsers failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1837,7 +2057,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.listHouseholds();
       } catch (error) {
-        console.warn("Database listHouseholds failed, falling back to memory:", error);
+        console.warn(
+          "Database listHouseholds failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1848,7 +2071,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.createEnergyReading(reading);
       } catch (error) {
-        console.warn("Database createEnergyReading failed, falling back to memory:", error);
+        console.warn(
+          "Database createEnergyReading failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1857,20 +2083,32 @@ var HybridStorage = class {
   async getEnergyReadingsByHousehold(householdId, limit) {
     if (this.isDatabaseAvailable && this.databaseStorage) {
       try {
-        return await this.databaseStorage.getEnergyReadingsByHousehold(householdId, limit);
+        return await this.databaseStorage.getEnergyReadingsByHousehold(
+          householdId,
+          limit
+        );
       } catch (error) {
-        console.warn("Database getEnergyReadingsByHousehold failed, falling back to memory:", error);
+        console.warn(
+          "Database getEnergyReadingsByHousehold failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
-    return await this.memoryStorage.getEnergyReadingsByHousehold(householdId, limit);
+    return await this.memoryStorage.getEnergyReadingsByHousehold(
+      householdId,
+      limit
+    );
   }
   async createEnergyTrade(trade) {
     if (this.isDatabaseAvailable && this.databaseStorage) {
       try {
         return await this.databaseStorage.createEnergyTrade(trade);
       } catch (error) {
-        console.warn("Database createEnergyTrade failed, falling back to memory:", error);
+        console.warn(
+          "Database createEnergyTrade failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1881,7 +2119,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getEnergyTrades(limit);
       } catch (error) {
-        console.warn("Database getEnergyTrades failed, falling back to memory:", error);
+        console.warn(
+          "Database getEnergyTrades failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1890,20 +2131,32 @@ var HybridStorage = class {
   async getEnergyTradesByHousehold(householdId, limit) {
     if (this.isDatabaseAvailable && this.databaseStorage) {
       try {
-        return await this.databaseStorage.getEnergyTradesByHousehold(householdId, limit);
+        return await this.databaseStorage.getEnergyTradesByHousehold(
+          householdId,
+          limit
+        );
       } catch (error) {
-        console.warn("Database getEnergyTradesByHousehold failed, falling back to memory:", error);
+        console.warn(
+          "Database getEnergyTradesByHousehold failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
-    return await this.memoryStorage.getEnergyTradesByHousehold(householdId, limit);
+    return await this.memoryStorage.getEnergyTradesByHousehold(
+      householdId,
+      limit
+    );
   }
   async getEnergyTradesByUser(userId, limit) {
     if (this.isDatabaseAvailable && this.databaseStorage) {
       try {
         return await this.databaseStorage.getEnergyTradesByUser(userId, limit);
       } catch (error) {
-        console.warn("Database getEnergyTradesByUser failed, falling back to memory:", error);
+        console.warn(
+          "Database getEnergyTradesByUser failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1914,7 +2167,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getEnergyTradeById(id);
       } catch (error) {
-        console.warn("Database getEnergyTradeById failed, falling back to memory:", error);
+        console.warn(
+          "Database getEnergyTradeById failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1925,7 +2181,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.updateEnergyTrade(id, updates);
       } catch (error) {
-        console.warn("Database updateEnergyTrade failed, falling back to memory:", error);
+        console.warn(
+          "Database updateEnergyTrade failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1936,7 +2195,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.deleteEnergyTrade(id);
       } catch (error) {
-        console.warn("Database deleteEnergyTrade failed, falling back to memory:", error);
+        console.warn(
+          "Database deleteEnergyTrade failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1947,7 +2209,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.updateEnergyTradeStatus(id, status);
       } catch (error) {
-        console.warn("Database updateEnergyTradeStatus failed, falling back to memory:", error);
+        console.warn(
+          "Database updateEnergyTradeStatus failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1958,7 +2223,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.createChatMessage(message);
       } catch (error) {
-        console.warn("Database createChatMessage failed, falling back to memory:", error);
+        console.warn(
+          "Database createChatMessage failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1969,7 +2237,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getChatMessages(limit);
       } catch (error) {
-        console.warn("Database getChatMessages failed, falling back to memory:", error);
+        console.warn(
+          "Database getChatMessages failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1980,7 +2251,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getChatMessagesByUser(userId, limit);
       } catch (error) {
-        console.warn("Database getChatMessagesByUser failed, falling back to memory:", error);
+        console.warn(
+          "Database getChatMessagesByUser failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -1989,9 +2263,15 @@ var HybridStorage = class {
   async getChatMessagesBySession(sessionId, limit = 50) {
     if (this.isDatabaseAvailable && this.databaseStorage) {
       try {
-        return await this.databaseStorage.getChatMessagesBySession(sessionId, limit);
+        return await this.databaseStorage.getChatMessagesBySession(
+          sessionId,
+          limit
+        );
       } catch (error) {
-        console.warn("Database getChatMessagesBySession failed, falling back to memory:", error);
+        console.warn(
+          "Database getChatMessagesBySession failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2003,7 +2283,10 @@ var HybridStorage = class {
         await this.databaseStorage.clearSessionData(sessionId);
         return;
       } catch (error) {
-        console.warn("Database clearSessionData failed, falling back to memory:", error);
+        console.warn(
+          "Database clearSessionData failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2014,7 +2297,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getEnergyReadings(limit);
       } catch (error) {
-        console.warn("Database getEnergyReadings failed, falling back to memory:", error);
+        console.warn(
+          "Database getEnergyReadings failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2023,9 +2309,15 @@ var HybridStorage = class {
   async getRealtimeMarketData(latitude, longitude) {
     if (this.isDatabaseAvailable && this.databaseStorage) {
       try {
-        return await this.databaseStorage.getRealtimeMarketData(latitude, longitude);
+        return await this.databaseStorage.getRealtimeMarketData(
+          latitude,
+          longitude
+        );
       } catch (error) {
-        console.warn("Database getRealtimeMarketData failed, falling back to memory:", error);
+        console.warn(
+          "Database getRealtimeMarketData failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2036,7 +2328,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getNetworkAnalytics();
       } catch (error) {
-        console.warn("Database getNetworkAnalytics failed, falling back to memory:", error);
+        console.warn(
+          "Database getNetworkAnalytics failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2047,7 +2342,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getChatResponse(message, userId);
       } catch (error) {
-        console.warn("Database getChatResponse failed, falling back to memory:", error);
+        console.warn(
+          "Database getChatResponse failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2067,7 +2365,10 @@ var HybridStorage = class {
         await this.databaseStorage.createSession(sessionId, userId);
         return;
       } catch (error) {
-        console.warn("Database createSession failed, falling back to memory:", error);
+        console.warn(
+          "Database createSession failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2078,7 +2379,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getSessionUser(sessionId);
       } catch (error) {
-        console.warn("Database getSessionUser failed, falling back to memory:", error);
+        console.warn(
+          "Database getSessionUser failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2090,7 +2394,10 @@ var HybridStorage = class {
         await this.databaseStorage.deleteSession(sessionId);
         return;
       } catch (error) {
-        console.warn("Database deleteSession failed, falling back to memory:", error);
+        console.warn(
+          "Database deleteSession failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2102,7 +2409,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.createTradeAcceptance(acceptance);
       } catch (error) {
-        console.warn("Database createTradeAcceptance failed, falling back to memory:", error);
+        console.warn(
+          "Database createTradeAcceptance failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2113,7 +2423,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getTradeAcceptancesByTrade(tradeId);
       } catch (error) {
-        console.warn("Database getTradeAcceptancesByTrade failed, falling back to memory:", error);
+        console.warn(
+          "Database getTradeAcceptancesByTrade failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2124,7 +2437,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getTradeAcceptancesByUser(userId);
       } catch (error) {
-        console.warn("Database getTradeAcceptancesByUser failed, falling back to memory:", error);
+        console.warn(
+          "Database getTradeAcceptancesByUser failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2133,9 +2449,15 @@ var HybridStorage = class {
   async updateTradeAcceptanceStatus(id, status) {
     if (this.isDatabaseAvailable && this.databaseStorage) {
       try {
-        return await this.databaseStorage.updateTradeAcceptanceStatus(id, status);
+        return await this.databaseStorage.updateTradeAcceptanceStatus(
+          id,
+          status
+        );
       } catch (error) {
-        console.warn("Database updateTradeAcceptanceStatus failed, falling back to memory:", error);
+        console.warn(
+          "Database updateTradeAcceptanceStatus failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2146,7 +2468,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.deleteTradeAcceptance(id);
       } catch (error) {
-        console.warn("Database deleteTradeAcceptance failed, falling back to memory:", error);
+        console.warn(
+          "Database deleteTradeAcceptance failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2157,7 +2482,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getAvailableOffersForUser(userId);
       } catch (error) {
-        console.warn("Database getAvailableOffersForUser failed, falling back to memory:", error);
+        console.warn(
+          "Database getAvailableOffersForUser failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2168,7 +2496,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.shareContactInfo(acceptanceId);
       } catch (error) {
-        console.warn("Database shareContactInfo failed, falling back to memory:", error);
+        console.warn(
+          "Database shareContactInfo failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2179,7 +2510,10 @@ var HybridStorage = class {
       try {
         return await this.databaseStorage.getApplicationsToMyTrades(userId);
       } catch (error) {
-        console.warn("Database getApplicationsToMyTrades failed, falling back to memory:", error);
+        console.warn(
+          "Database getApplicationsToMyTrades failed, falling back to memory:",
+          error
+        );
         this.isDatabaseAvailable = false;
       }
     }
@@ -2187,9 +2521,11 @@ var HybridStorage = class {
   }
 };
 var storage = (() => {
-  const databaseUrl = getDatabaseUrl2();
+  const databaseUrl = getDatabaseUrl();
   if (databaseUrl) {
-    console.log("\u2713 DATABASE_URL found - using hybrid storage with PostgreSQL fallback");
+    console.log(
+      "\u2713 DATABASE_URL found - using hybrid storage with PostgreSQL fallback"
+    );
     return new HybridStorage();
   }
   console.log("Using memory storage for development");
@@ -2201,49 +2537,132 @@ init_schema();
 
 // server/gemini-chat.ts
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import dotenv from "dotenv";
-dotenv.config();
-console.log("Initializing Gemini AI for energy optimization chat...");
-console.log("API Key present:", !!process.env.GOOGLE_API_KEY);
-var genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+
+// server/api-cache.ts
+import { createHash } from "node:crypto";
+var APICache = class {
+  cache = /* @__PURE__ */ new Map();
+  defaultTTL = 60 * 60 * 1e3;
+  // 1 hour default TTL
+  set(key, data, ttl = this.defaultTTL) {
+    const entry = {
+      data,
+      timestamp: Date.now(),
+      expiry: Date.now() + ttl
+    };
+    this.cache.set(key, entry);
+  }
+  get(key) {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+    return entry.data;
+  }
+  has(key) {
+    const entry = this.cache.get(key);
+    if (!entry) return false;
+    if (Date.now() > entry.expiry) {
+      this.cache.delete(key);
+      return false;
+    }
+    return true;
+  }
+  clear() {
+    this.cache.clear();
+  }
+  // Clean expired entries
+  cleanup() {
+    const now = Date.now();
+    const entries = Array.from(this.cache.entries());
+    for (const [key, entry] of entries) {
+      if (now > entry.expiry) {
+        this.cache.delete(key);
+      }
+    }
+  }
+  // Get cache statistics
+  getStats() {
+    this.cleanup();
+    return {
+      size: this.cache.size,
+      totalEntries: this.cache.size
+    };
+  }
+};
+var apiCache = new APICache();
+setInterval(
+  () => {
+    const before = apiCache.getStats().size;
+    apiCache.cleanup();
+    const after = apiCache.getStats().size;
+    if (before > after) {
+      console.log(`Cache cleanup: removed ${before - after} expired entries`);
+    }
+  },
+  30 * 60 * 1e3
+);
+function generateChatCacheKey(message, history) {
+  const content = message + (history || []).join("");
+  const hash = createHash("md5").update(content).digest("hex");
+  return `chat_response_${hash}`;
+}
+
+// server/gemini-chat.ts
+var genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
+var CHAT_CACHE_TTL = 30 * 60 * 1e3;
 async function generateEnergyOptimizationResponse(userMessage, userContext) {
+  const cacheKey = generateChatCacheKey(userMessage, []);
+  const cached = apiCache.get(cacheKey);
+  if (cached) return cached;
   try {
-    console.log("Generating AI response for energy optimization query");
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.0-flash",
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 300,
+        topP: 0.9
+      }
+    });
     const contextInfo = userContext ? `
 USER CONTEXT:
 - Name: ${userContext.username}
 - Location: ${userContext.location || "Not specified"}
 - Households: ${userContext.households?.length || 0} registered
-- Current Energy Data: ${userContext.energyData ? "Available" : "Not available"}
+- Has energy data: ${userContext.energyData ? "Yes" : "No"}
+${userContext.energyData ? `- Solar capacity: ${userContext.energyData.solarCapacity || "N/A"} kW` : ""}
+${userContext.energyData ? `- Battery level: ${userContext.energyData.batteryLevel || "N/A"}%` : ""}
 ` : "";
-    const systemPrompt = `You are a helpful SolarSense energy advisor. 
+    const systemPrompt = `You are SolarSense AI \u2014 an expert solar energy advisor for residential users in India.
 
 ${contextInfo}
 
-RESPONSE RULES:
-- Write 2-3 sentences maximum (never exceed 10 sentences)
-- Be helpful and practical
-- Use simple, clear language
-- Focus on actionable advice
+RULES:
+- Maximum 3 concise sentences
+- Give specific, actionable advice with numbers when possible
+- Reference Indian market rates (\u20B96.5/kWh, \u20B945/watt) when relevant
+- If the user's data is available, personalize the answer
+- Use markdown formatting for clarity (bold key terms, bullet points if needed)
 
-USER QUESTION: ${userMessage}
+QUESTION: ${userMessage}
 
 ANSWER:`;
     const result = await model.generateContent(systemPrompt);
-    const response = await result.response;
-    const text2 = response.text();
-    console.log("AI response generated successfully");
+    const text2 = result.response.text();
+    apiCache.set(cacheKey, text2, CHAT_CACHE_TTL);
     return text2;
   } catch (error) {
     console.error("Gemini AI error:", error);
-    if (userMessage.toLowerCase().includes("solar")) {
-      return "Keep your solar panels clean and free of debris. Check for shading from trees or buildings that might reduce efficiency. Monitor peak sun hours between 10 AM and 2 PM for best performance.";
-    } else if (userMessage.toLowerCase().includes("battery")) {
-      return "Avoid deep discharge cycles to extend battery life. Keep batteries between 20-80% charge when possible. Monitor temperature as batteries work best in moderate conditions.";
-    } else {
-      return "I'm having trouble connecting to the AI service right now. Please try again in a moment. Feel free to ask about solar panels, batteries, or energy trading.";
-    }
+    const q = userMessage.toLowerCase();
+    if (q.includes("solar"))
+      return "Keep panels clean and unshaded for best output. Peak generation is between 10 AM\u20132 PM. A typical 5 kW system saves ~\u20B950,000/year.";
+    if (q.includes("battery"))
+      return "Keep batteries between 20\u201380% charge to maximize lifespan. Lithium-ion batteries in India cost \u20B98\u201312/Wh.";
+    if (q.includes("trade") || q.includes("sell"))
+      return "You can trade surplus energy with neighbours through SolarSense. Price your energy competitively around \u20B95\u20136/kWh.";
+    return "I'm having trouble connecting to the AI service. Please try again shortly.";
   }
 }
 
@@ -2283,26 +2702,48 @@ var MLEnergyEngine = class {
     const maxPhysicalOutput = baseGeneration * 1.1;
     const neuralOutput = neuralPrediction * maxPhysicalOutput;
     const historicalAccuracy = this.historicalData.getAccuracy(household.id);
-    const adaptationFactor = Math.max(0.9, Math.min(1.1, this.adaptiveLearning.getAdaptationFactor(household.id)));
+    const adaptationFactor = Math.max(
+      0.9,
+      Math.min(1.1, this.adaptiveLearning.getAdaptationFactor(household.id))
+    );
     const confidence = this.adaptiveLearning.getConfidence(household.id);
     const mlWeight = Math.min(0.25, historicalAccuracy * confidence * 0.5);
     const baselineWeight = 1 - mlWeight;
     let finalPrediction = baselinePrediction * baselineWeight + neuralOutput * mlWeight;
     finalPrediction *= adaptationFactor;
     const physicalLimit = baseGeneration * weatherMultiplier;
-    finalPrediction = Math.min(finalPrediction, Math.min(physicalLimit, baseGeneration));
+    finalPrediction = Math.min(
+      finalPrediction,
+      Math.min(physicalLimit, baseGeneration)
+    );
     setTimeout(() => {
-      const groundTruthGeneration = this.generateGroundTruthGeneration(household, weather, timeOfDay);
+      const groundTruthGeneration = this.generateGroundTruthGeneration(
+        household,
+        weather,
+        timeOfDay
+      );
       if (groundTruthGeneration >= 0 && baseGeneration > 0) {
         const normalizedGroundTruth = groundTruthGeneration / maxPhysicalOutput;
-        this.neuralPredictor.train(neuralInputs, Math.min(1, Math.max(0, normalizedGroundTruth)));
-        this.adaptiveLearning.updateConfidence(household.id, groundTruthGeneration, finalPrediction);
+        this.neuralPredictor.train(
+          neuralInputs,
+          Math.min(1, Math.max(0, normalizedGroundTruth))
+        );
+        this.adaptiveLearning.updateConfidence(
+          household.id,
+          groundTruthGeneration,
+          finalPrediction
+        );
         this.historicalData.recordActual(
           household.id,
           { generation: groundTruthGeneration, demand: 0 },
           { generation: finalPrediction, demand: 0 }
         );
-        this.accuracyMetrics.record("generation", household.id, groundTruthGeneration, finalPrediction);
+        this.accuracyMetrics.record(
+          "generation",
+          household.id,
+          groundTruthGeneration,
+          finalPrediction
+        );
       }
     }, 100);
     return Math.max(0, finalPrediction);
@@ -2331,29 +2772,52 @@ var MLEnergyEngine = class {
     const maxReasonableDemand = baseDemand * 2;
     const neuralDemand = neuralPrediction * maxReasonableDemand;
     const historicalAccuracy = this.historicalData.getAccuracy(household.id);
-    const adaptationFactor = Math.max(0.9, Math.min(1.1, this.adaptiveLearning.getAdaptationFactor(household.id)));
+    const adaptationFactor = Math.max(
+      0.9,
+      Math.min(1.1, this.adaptiveLearning.getAdaptationFactor(household.id))
+    );
     const confidence = this.adaptiveLearning.getConfidence(household.id);
     const mlWeight = Math.min(0.2, historicalAccuracy * confidence * 0.4);
     const baselineWeight = 1 - mlWeight;
     let finalPrediction = baselinePrediction * baselineWeight + neuralDemand * mlWeight;
     finalPrediction *= adaptationFactor;
-    const smartVariance = this.calculateSmartVariance(household, timeOfDay, dayOfWeek);
+    const smartVariance = this.calculateSmartVariance(
+      household,
+      timeOfDay,
+      dayOfWeek
+    );
     finalPrediction *= smartVariance;
     const minDemand = baseDemand * 0.3;
     const maxDemand = baseDemand * 3;
     finalPrediction = Math.max(minDemand, Math.min(maxDemand, finalPrediction));
     setTimeout(() => {
-      const groundTruthDemand = this.generateGroundTruthDemand(household, timeOfDay, dayOfWeek);
+      const groundTruthDemand = this.generateGroundTruthDemand(
+        household,
+        timeOfDay,
+        dayOfWeek
+      );
       if (groundTruthDemand >= 0 && baseDemand > 0) {
         const normalizedGroundTruth = groundTruthDemand / maxReasonableDemand;
-        this.neuralPredictor.train(demandInputs, Math.min(1, Math.max(0, normalizedGroundTruth)));
-        this.adaptiveLearning.updateConfidence(household.id, groundTruthDemand, finalPrediction);
+        this.neuralPredictor.train(
+          demandInputs,
+          Math.min(1, Math.max(0, normalizedGroundTruth))
+        );
+        this.adaptiveLearning.updateConfidence(
+          household.id,
+          groundTruthDemand,
+          finalPrediction
+        );
         this.historicalData.recordActual(
           household.id,
           { generation: 0, demand: groundTruthDemand },
           { generation: 0, demand: finalPrediction }
         );
-        this.accuracyMetrics.record("demand", household.id, groundTruthDemand, finalPrediction);
+        this.accuracyMetrics.record(
+          "demand",
+          household.id,
+          groundTruthDemand,
+          finalPrediction
+        );
       }
     }, 150);
     return Math.max(0.1, finalPrediction);
@@ -2479,34 +2943,49 @@ var MLEnergyEngine = class {
   }
   // Simulate outage response and recovery
   simulateOutageResponse(affectedHouseholds, totalHouseholds) {
-    const survivingCapacity = this.calculateSurvivingCapacity(affectedHouseholds, totalHouseholds);
-    const emergencyRouting = this.calculateEmergencyRouting(affectedHouseholds, survivingCapacity);
-    const recoveryPlan = this.generateRecoveryPlan(affectedHouseholds, totalHouseholds);
+    const survivingCapacity = this.calculateSurvivingCapacity(
+      affectedHouseholds,
+      totalHouseholds
+    );
+    const emergencyRouting = this.calculateEmergencyRouting(
+      affectedHouseholds,
+      survivingCapacity
+    );
+    const recoveryPlan = this.generateRecoveryPlan(
+      affectedHouseholds,
+      totalHouseholds
+    );
     return {
       survivingCapacity,
       emergencyRouting,
       estimatedRecoveryTime: recoveryPlan.estimatedTime,
       priorityAllocation: recoveryPlan.priorityHouseholds,
-      communityResilience: this.calculateResilienceScore(totalHouseholds, affectedHouseholds.length)
+      communityResilience: this.calculateResilienceScore(
+        totalHouseholds,
+        affectedHouseholds.length
+      )
     };
   }
   // Realistic weather adaptation algorithms based on solar irradiance data
   getWeatherMultiplier(weather) {
     const baseMultipliers = {
-      "sunny": 1,
+      sunny: 1,
       // Clear sky irradiance ~1000 W/m²
       "partly-cloudy": 0.82,
       // ~820 W/m² typical
-      "cloudy": 0.45,
+      cloudy: 0.45,
       // ~450 W/m² heavy clouds
-      "overcast": 0.25,
+      overcast: 0.25,
       // ~250 W/m² thick overcast
-      "rainy": 0.15,
+      rainy: 0.15,
       // ~150 W/m² during rain
-      "stormy": 0.08
+      stormy: 0.08
       // ~80 W/m² storm conditions
     };
-    const cloudCoverImpact = Math.max(0.1, 1 - weather.cloudCover / 100 * 0.7);
+    const cloudCoverImpact = Math.max(
+      0.1,
+      1 - weather.cloudCover / 100 * 0.7
+    );
     const temperatureImpact = this.getTemperatureImpact(weather.temperature);
     return (baseMultipliers[weather.condition] || 0.6) * cloudCoverImpact * temperatureImpact;
   }
@@ -2518,12 +2997,27 @@ var MLEnergyEngine = class {
   }
   // Calculate grid balancing to prevent overload during peak demand
   calculateGridBalancing(networkState) {
-    const totalGeneration = networkState.households.reduce((sum, h) => sum + h.predictedGeneration, 0);
-    const totalDemand = networkState.households.reduce((sum, h) => sum + h.predictedDemand, 0);
-    const totalBatteryCapacity = networkState.households.reduce((sum, h) => sum + (h.batteryCapacity || 0), 0);
-    const totalStoredEnergy = networkState.households.reduce((sum, h) => sum + (h.currentBatteryLevel || 0) * (h.batteryCapacity || 0) / 100, 0);
+    const totalGeneration = networkState.households.reduce(
+      (sum, h) => sum + h.predictedGeneration,
+      0
+    );
+    const totalDemand = networkState.households.reduce(
+      (sum, h) => sum + h.predictedDemand,
+      0
+    );
+    const totalBatteryCapacity = networkState.households.reduce(
+      (sum, h) => sum + (h.batteryCapacity || 0),
+      0
+    );
+    const totalStoredEnergy = networkState.households.reduce(
+      (sum, h) => sum + (h.currentBatteryLevel || 0) * (h.batteryCapacity || 0) / 100,
+      0
+    );
     const supplyDemandRatio = totalDemand > 0 ? totalGeneration / totalDemand : 1;
-    const gridLoadFactor = Math.min(1, totalDemand / (totalGeneration + totalStoredEnergy));
+    const gridLoadFactor = Math.min(
+      1,
+      totalDemand / (totalGeneration + totalStoredEnergy)
+    );
     const loadSheddingCandidates = [];
     const gridSupportProviders = [];
     networkState.households.forEach((h) => {
@@ -2553,8 +3047,16 @@ var MLEnergyEngine = class {
     networkState.households.forEach((h) => {
       const deficit = h.predictedDemand - h.predictedGeneration - (h.currentBatteryLevel || 0) * (h.batteryCapacity || 0) / 100;
       if (deficit > 1) {
-        priorityLoads[h.id] = ["refrigeration", "medical_equipment", "lighting"];
-        defferrableLoads[h.id] = ["water_heating", "air_conditioning", "electric_vehicle"];
+        priorityLoads[h.id] = [
+          "refrigeration",
+          "medical_equipment",
+          "lighting"
+        ];
+        defferrableLoads[h.id] = [
+          "water_heating",
+          "air_conditioning",
+          "electric_vehicle"
+        ];
         loadShiftingOpportunities[h.id] = {
           shiftableLoad: Math.min(deficit * 0.3, 2),
           // Max 2kW shift
@@ -2568,7 +3070,10 @@ var MLEnergyEngine = class {
       priorityLoads,
       defferrableLoads,
       loadShiftingOpportunities,
-      peakDemandReduction: Object.values(loadShiftingOpportunities).reduce((sum, strategy) => sum + strategy.potentialSavings, 0)
+      peakDemandReduction: Object.values(loadShiftingOpportunities).reduce(
+        (sum, strategy) => sum + strategy.potentialSavings,
+        0
+      )
     };
   }
   // Ensure equitable access to power across all households
@@ -2584,9 +3089,14 @@ var MLEnergyEngine = class {
         priorityLevel: this.calculatePriorityLevel(h, securityRatio)
       };
     });
-    const vulnerableHouseholds = householdEnergySecurity.filter((h) => h.isVulnerable);
+    const vulnerableHouseholds = householdEnergySecurity.filter(
+      (h) => h.isVulnerable
+    );
     const averageEnergySecurity = householdEnergySecurity.reduce((sum, h) => sum + h.energySecurity, 0) / householdEnergySecurity.length;
-    const redistributionPlan = this.calculateRedistributionPlan(networkState, vulnerableHouseholds);
+    const redistributionPlan = this.calculateRedistributionPlan(
+      networkState,
+      vulnerableHouseholds
+    );
     return {
       averageEnergySecurity,
       vulnerableHouseholds: vulnerableHouseholds.map((h) => h.householdId),
@@ -2608,7 +3118,9 @@ var MLEnergyEngine = class {
     const redistributionActions = [];
     vulnerableHouseholds.forEach((vulnerable) => {
       const needsKwh = networkState.households.find((h) => h.id === vulnerable.householdId)?.predictedDemand || 0;
-      const availableKwh = networkState.households.find((h) => h.id === vulnerable.householdId);
+      const availableKwh = networkState.households.find(
+        (h) => h.id === vulnerable.householdId
+      );
       const shortfall = needsKwh - (availableKwh?.predictedGeneration || 0) - (availableKwh?.currentBatteryLevel || 0) * (availableKwh?.batteryCapacity || 0) / 100;
       if (shortfall > 0 && surplusHouseholds.length > 0) {
         const donor = surplusHouseholds[0];
@@ -2629,8 +3141,13 @@ var MLEnergyEngine = class {
     });
     return {
       actions: redistributionActions,
-      totalRedistributed: redistributionActions.reduce((sum, action) => sum + action.energyAmount, 0),
-      beneficiaryCount: new Set(redistributionActions.map((a) => a.toHouseholdId)).size
+      totalRedistributed: redistributionActions.reduce(
+        (sum, action) => sum + action.energyAmount,
+        0
+      ),
+      beneficiaryCount: new Set(
+        redistributionActions.map((a) => a.toHouseholdId)
+      ).size
     };
   }
   getTimeMultiplier(hour) {
@@ -2672,15 +3189,36 @@ var MLEnergyEngine = class {
   }
   getSeasonalMultiplier() {
     const month = (/* @__PURE__ */ new Date()).getMonth();
-    const seasonalFactors = [0.6, 0.7, 0.8, 0.9, 1, 1, 1, 0.95, 0.85, 0.75, 0.65, 0.55];
+    const seasonalFactors = [
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1,
+      1,
+      1,
+      0.95,
+      0.85,
+      0.75,
+      0.65,
+      0.55
+    ];
     return seasonalFactors[month];
   }
   analyzeNetworkState(households2, weather) {
     const currentHour = (/* @__PURE__ */ new Date()).getHours();
     const dayOfWeek = (/* @__PURE__ */ new Date()).getDay();
     const householdsWithPredictions = households2.map((household) => {
-      const predictedGeneration = this.predictEnergyGeneration(household, weather, currentHour);
-      const predictedDemand = this.predictEnergyDemand(household, currentHour, dayOfWeek);
+      const predictedGeneration = this.predictEnergyGeneration(
+        household,
+        weather,
+        currentHour
+      );
+      const predictedDemand = this.predictEnergyDemand(
+        household,
+        currentHour,
+        dayOfWeek
+      );
       const batteryLevel = (household.currentBatteryLevel || 0) * (household.batteryCapacity || 0) / 100;
       const batteryCapacity = household.batteryCapacity || 0;
       return {
@@ -2696,8 +3234,14 @@ var MLEnergyEngine = class {
     });
     return {
       households: householdsWithPredictions,
-      totalGeneration: householdsWithPredictions.reduce((sum, h) => sum + h.predictedGeneration, 0),
-      totalDemand: householdsWithPredictions.reduce((sum, h) => sum + h.predictedDemand, 0),
+      totalGeneration: householdsWithPredictions.reduce(
+        (sum, h) => sum + h.predictedGeneration,
+        0
+      ),
+      totalDemand: householdsWithPredictions.reduce(
+        (sum, h) => sum + h.predictedDemand,
+        0
+      ),
       weather,
       timestamp: /* @__PURE__ */ new Date()
     };
@@ -2722,15 +3266,24 @@ var MLEnergyEngine = class {
       if (supplier.netBalance > 0) {
         availableSupply += supplier.netBalance;
       }
-      const batteryAvailable = Math.max(0, supplier.batteryLevel - supplier.batteryCapacity * 0.2);
+      const batteryAvailable = Math.max(
+        0,
+        supplier.batteryLevel - supplier.batteryCapacity * 0.2
+      );
       availableSupply += batteryAvailable;
       if (availableSupply >= 0.5) {
         supplierBalances.set(supplier.id, availableSupply);
       }
     });
     const sortedDemanders = demanders.filter((d) => {
-      const actualDeficit = Math.max(0, d.predictedDemand - d.predictedGeneration);
-      const batteryNeed = Math.max(0, d.batteryCapacity * 0.6 - d.batteryLevel);
+      const actualDeficit = Math.max(
+        0,
+        d.predictedDemand - d.predictedGeneration
+      );
+      const batteryNeed = Math.max(
+        0,
+        d.batteryCapacity * 0.6 - d.batteryLevel
+      );
       return actualDeficit + batteryNeed >= 0.3;
     }).sort((a, b) => {
       const urgencyA = a.batteryLevel / Math.max(a.batteryCapacity, 1);
@@ -2749,8 +3302,14 @@ var MLEnergyEngine = class {
         supplier: suppliers.find((s) => s.id === supplierId),
         availableSupply: supply
       })).sort((a, b) => {
-        const distanceA = this.calculateDistance(a.supplier.address || "", demander.address || "");
-        const distanceB = this.calculateDistance(b.supplier.address || "", demander.address || "");
+        const distanceA = this.calculateDistance(
+          a.supplier.address || "",
+          demander.address || ""
+        );
+        const distanceB = this.calculateDistance(
+          b.supplier.address || "",
+          demander.address || ""
+        );
         return distanceA - distanceB;
       });
       const bestMatch = availableSuppliers[0];
@@ -2768,7 +3327,10 @@ var MLEnergyEngine = class {
             demanderId: demander.id,
             energyAmount: Math.round(energyAmount * 100) / 100,
             // Round to 2 decimal places
-            distance: this.calculateDistance(bestMatch.supplier.address || "", demander.address || ""),
+            distance: this.calculateDistance(
+              bestMatch.supplier.address || "",
+              demander.address || ""
+            ),
             priority
           });
           const newSupply = bestMatch.availableSupply - energyAmount;
@@ -2781,11 +3343,17 @@ var MLEnergyEngine = class {
       }
     });
     if (networkState.weather.condition === "stormy") {
-      console.log(`\u{1F329}\uFE0F Stormy weather trading: ${suppliers.length} suppliers, ${demanders.length} demanders \u2192 ${pairs.length} trades`);
+      console.log(
+        `\u{1F329}\uFE0F Stormy weather trading: ${suppliers.length} suppliers, ${demanders.length} demanders \u2192 ${pairs.length} trades`
+      );
       if (pairs.length === 0) {
-        console.log(`\u26A0\uFE0F No trades in stormy weather - suppliers available: ${supplierBalances.size}`);
+        console.log(
+          `\u26A0\uFE0F No trades in stormy weather - suppliers available: ${supplierBalances.size}`
+        );
         suppliers.forEach((s) => {
-          console.log(`  Supplier ${s.id}: gen=${s.predictedGeneration.toFixed(1)}, demand=${s.predictedDemand.toFixed(1)}, battery=${s.batteryLevel.toFixed(1)}/${s.batteryCapacity}`);
+          console.log(
+            `  Supplier ${s.id}: gen=${s.predictedGeneration.toFixed(1)}, demand=${s.predictedDemand.toFixed(1)}, battery=${s.batteryLevel.toFixed(1)}/${s.batteryCapacity}`
+          );
         });
       }
     }
@@ -2827,14 +3395,22 @@ var MLEnergyEngine = class {
     const recommendations = [];
     const stabilityScore = this.calculateGridStability(networkState);
     if (stabilityScore < 0.7) {
-      recommendations.push("Grid stability low - recommend immediate battery deployment");
+      recommendations.push(
+        "Grid stability low - recommend immediate battery deployment"
+      );
     }
     if (networkState.totalGeneration < networkState.totalDemand * 0.8) {
-      recommendations.push("Energy deficit detected - activate demand response programs");
+      recommendations.push(
+        "Energy deficit detected - activate demand response programs"
+      );
     }
-    const highDemandHouseholds = networkState.households.filter((h) => h.needsSupport).length;
+    const highDemandHouseholds = networkState.households.filter(
+      (h) => h.needsSupport
+    ).length;
     if (highDemandHouseholds > networkState.households.length * 0.4) {
-      recommendations.push("High network demand - consider temporary load shedding");
+      recommendations.push(
+        "High network demand - consider temporary load shedding"
+      );
     }
     return recommendations;
   }
@@ -2872,8 +3448,12 @@ var MLEnergyEngine = class {
     if (networkSize === 0) {
       return 0.5;
     }
-    const distributedGeneration = allHouseholds.filter((h) => (h.solarCapacity || 0) > 0).length;
-    const batteryBackup = allHouseholds.filter((h) => (h.batteryCapacity || 0) > 0).length;
+    const distributedGeneration = allHouseholds.filter(
+      (h) => (h.solarCapacity || 0) > 0
+    ).length;
+    const batteryBackup = allHouseholds.filter(
+      (h) => (h.batteryCapacity || 0) > 0
+    ).length;
     const diversityScore = distributedGeneration / networkSize * 0.4;
     const backupScore = batteryBackup / networkSize * 0.3;
     const impactScore = (1 - affectedCount / networkSize) * 0.3;
@@ -2919,9 +3499,9 @@ var MLEnergyEngine = class {
       0.95,
       // Sunday - moderate usage
       1,
-      // Monday - peak work-from-home 
+      // Monday - peak work-from-home
       1,
-      // Tuesday 
+      // Tuesday
       1,
       // Wednesday
       1,
@@ -2957,7 +3537,7 @@ var MLEnergyEngine = class {
       0.9,
       // Apr
       1,
-      // May 
+      // May
       1.3,
       // Jun - AC season starts
       1.4,
@@ -3149,13 +3729,15 @@ var AccuracyTracker = class {
     let count2 = 0;
     this.predictions.forEach((records, key) => {
       if (key.startsWith(type)) {
-        records.forEach((record) => {
-          if (record.actual > 0) {
-            const percentageError = Math.abs(record.actual - record.predicted) / record.actual * 100;
-            totalError += percentageError;
-            count2++;
+        records.forEach(
+          (record) => {
+            if (record.actual > 0) {
+              const percentageError = Math.abs(record.actual - record.predicted) / record.actual * 100;
+              totalError += percentageError;
+              count2++;
+            }
           }
-        });
+        );
       }
     });
     return count2 > 0 ? totalError / count2 : 15;
@@ -3215,125 +3797,64 @@ var SimulationDataContext = class {
   energyReadings = [];
   energyTrades = [];
   nextHouseholdId = 1e3;
-  // Start simulation IDs at 1000 to avoid conflicts
   nextReadingId = 1e4;
   nextTradeId = 1e4;
   // Initialize with demo households for simulation only
   initializeDemoHouseholds() {
     const currentHour = (/* @__PURE__ */ new Date()).getHours();
     const baseTime = Date.now();
-    this.households = [
-      {
-        id: this.nextHouseholdId++,
-        name: "Solar Pioneers (Demo)",
-        address: "Simulation District A",
-        solarCapacity: 5,
-        // Realistic 5kW system
-        batteryCapacity: 15,
-        currentBatteryLevel: 15,
-        // Low battery - needs energy
-        isOnline: true,
-        userId: 999,
-        // Mark as simulation data with special user ID
-        createdAt: new Date(baseTime - 24 * 60 * 60 * 1e3),
-        // 1 day ago
-        coordinates: null
-      },
-      {
-        id: this.nextHouseholdId++,
-        name: "Green Energy Hub (Demo)",
-        address: "Simulation District B",
-        solarCapacity: 8,
-        // Larger 8kW system
-        batteryCapacity: 20,
-        currentBatteryLevel: 95,
-        // High battery - can supply
-        isOnline: true,
-        userId: 999,
-        createdAt: new Date(baseTime - 12 * 60 * 60 * 1e3),
-        // 12 hours ago
-        coordinates: null
-      },
-      {
-        id: this.nextHouseholdId++,
-        name: "Community Center (Demo)",
-        address: "Simulation Commercial Zone",
-        solarCapacity: 12,
-        // Commercial 12kW system
-        batteryCapacity: 40,
-        currentBatteryLevel: 55,
-        // Medium battery
-        isOnline: true,
-        userId: 999,
-        createdAt: new Date(baseTime - 6 * 60 * 60 * 1e3),
-        // 6 hours ago
-        coordinates: null
-      },
-      {
-        id: this.nextHouseholdId++,
-        name: "Eco Apartments (Demo)",
-        address: "Simulation District C",
-        solarCapacity: 3,
-        // Small 3kW system
-        batteryCapacity: 10,
-        currentBatteryLevel: 25,
-        // Low battery - needs energy
-        isOnline: true,
-        userId: 999,
-        createdAt: new Date(baseTime - 18 * 60 * 60 * 1e3),
-        // 18 hours ago
-        coordinates: null
-      },
-      {
-        id: this.nextHouseholdId++,
-        name: "Smart Home Alpha (Demo)",
-        address: "Simulation District A",
-        solarCapacity: 6,
-        // Medium 6kW system
-        batteryCapacity: 18,
-        currentBatteryLevel: 80,
-        // High battery - can supply
-        isOnline: true,
-        userId: 999,
-        createdAt: new Date(baseTime - 3 * 60 * 60 * 1e3),
-        // 3 hours ago
-        coordinates: null
-      },
-      {
-        id: this.nextHouseholdId++,
-        name: "Tech Innovation Center (Demo)",
-        address: "Simulation Tech District",
-        solarCapacity: 10,
-        // Large 10kW system
-        batteryCapacity: 30,
-        currentBatteryLevel: 40,
-        // Medium-low battery
-        isOnline: true,
-        userId: 999,
-        createdAt: new Date(baseTime - 30 * 60 * 1e3),
-        // 30 minutes ago
-        coordinates: null
-      },
-      {
-        id: this.nextHouseholdId++,
-        name: "Residential Complex Beta (Demo)",
-        address: "Simulation District D",
-        solarCapacity: 4,
-        // Small-medium 4kW system
-        batteryCapacity: 12,
-        currentBatteryLevel: 10,
-        // Very low battery - urgent need
-        isOnline: true,
-        userId: 999,
-        createdAt: new Date(baseTime - 2 * 60 * 60 * 1e3),
-        // 2 hours ago
-        coordinates: null
-      }
+    const defs = [
+      ["Solar Pioneers (Demo)", "Simulation District A", 5, 15, 15, 24],
+      ["Green Energy Hub (Demo)", "Simulation District B", 8, 20, 95, 12],
+      ["Community Center (Demo)", "Simulation Commercial Zone", 12, 40, 55, 6],
+      ["Eco Apartments (Demo)", "Simulation District C", 3, 10, 25, 18],
+      ["Smart Home Alpha (Demo)", "Simulation District A", 6, 18, 80, 3],
+      [
+        "Tech Innovation Center (Demo)",
+        "Simulation Tech District",
+        10,
+        30,
+        40,
+        0.5
+      ],
+      [
+        "Residential Complex Beta (Demo)",
+        "Simulation District D",
+        4,
+        12,
+        10,
+        2
+      ],
+      ["Solar Farm Delta (Demo)", "Simulation Industrial Zone", 15, 50, 70, 8]
     ];
-    this.households.forEach((h) => {
-      const variation = Math.sin((h.id + currentHour) * Math.PI / 6) * 15;
-      h.currentBatteryLevel = Math.max(5, Math.min(95, h.currentBatteryLevel + variation));
-    });
+    this.households = defs.map(
+      ([
+        name,
+        address,
+        solarCapacity,
+        batteryCapacity,
+        batteryLevel,
+        hoursAgo
+      ]) => {
+        const id = this.nextHouseholdId++;
+        const variation = Math.sin((id + currentHour) * Math.PI / 6) * 15;
+        return {
+          id,
+          name,
+          address,
+          solarCapacity,
+          batteryCapacity,
+          currentBatteryLevel: Math.max(
+            5,
+            Math.min(95, batteryLevel + variation)
+          ),
+          isOnline: true,
+          userId: 999,
+          createdAt: new Date(baseTime - hoursAgo * 60 * 60 * 1e3),
+          coordinates: null
+        };
+      }
+    );
   }
   getHouseholds() {
     return this.households;
@@ -3372,11 +3893,6 @@ var SimulationDataContext = class {
   getRecentReadings(limit = 100) {
     return this.energyReadings.slice(-limit);
   }
-  clearAll() {
-    this.households = [];
-    this.energyReadings = [];
-    this.energyTrades = [];
-  }
 };
 var SimulationEngine = class {
   mlEngine;
@@ -3392,7 +3908,7 @@ var SimulationEngine = class {
     this.simulationData = new SimulationDataContext();
     this.mlEngine = new MLEnergyEngine();
     this.weatherSimulator = new WeatherSimulator();
-    this.outageSimulator = new OutageSimulator();
+    this.outageSimulator = new OutageSimulator(this.mlEngine);
   }
   // Start live simulation
   async startSimulation() {
@@ -3404,7 +3920,9 @@ var SimulationEngine = class {
       await this.runSimulationCycle();
     }, 1e4);
     console.log("\u2705 Live simulation started - updating every 10 seconds");
-    console.log(`\u{1F4CA} Simulation running with ${this.simulationData.getHouseholds().length} demo households (isolated from real data)`);
+    console.log(
+      `\u{1F4CA} Simulation running with ${this.simulationData.getHouseholds().length} demo households (isolated from real data)`
+    );
   }
   // Stop simulation
   stopSimulation() {
@@ -3427,7 +3945,9 @@ var SimulationEngine = class {
   // Trigger weather change for demonstration
   async triggerWeatherChange(condition) {
     const newWeather = this.weatherSimulator.setWeather(condition);
-    console.log(`\u{1F324}\uFE0F Simulation weather changed to: ${condition} (isolated from real-time dashboard)`);
+    console.log(
+      `\u{1F324}\uFE0F Simulation weather changed to: ${condition} (isolated from real-time dashboard)`
+    );
     await this.runSimulationCycle();
     return newWeather;
   }
@@ -3438,9 +3958,16 @@ var SimulationEngine = class {
       const outageCount = Math.max(1, Math.floor(allHouseholds.length * 0.25));
       householdIds = this.selectRandomHouseholds(allHouseholds, outageCount);
     }
-    const response = await this.outageSimulator.simulateOutage(householdIds, this.simulationData.getHouseholds());
-    console.log(`\u26A1 Simulation outage: ${householdIds.length} demo households affected (isolated from real data)`);
-    console.log(`\u{1F50B} Community resilience score: ${response.communityResilience.toFixed(2)}`);
+    const response = await this.outageSimulator.simulateOutage(
+      householdIds,
+      this.simulationData.getHouseholds()
+    );
+    console.log(
+      `\u26A1 Simulation outage: ${householdIds.length} demo households affected (isolated from real data)`
+    );
+    console.log(
+      `\u{1F50B} Community resilience score: ${response.communityResilience.toFixed(2)}`
+    );
     for (const householdId of householdIds) {
       this.simulationData.updateHousehold(householdId, {
         isOnline: false
@@ -3456,14 +3983,19 @@ var SimulationEngine = class {
       });
     }
     this.outageSimulator.clearOutage(householdIds);
-    console.log(`\u{1F50C} Simulation power restored to ${householdIds.length} demo households`);
+    console.log(
+      `\u{1F50C} Simulation power restored to ${householdIds.length} demo households`
+    );
   }
   // Main simulation cycle
   async runSimulationCycle() {
     try {
       const households2 = this.simulationData.getHouseholds();
       const currentWeather = this.weatherSimulator.getCurrentWeather();
-      const optimization = this.mlEngine.optimizeEnergyDistribution(households2, currentWeather);
+      const optimization = this.mlEngine.optimizeEnergyDistribution(
+        households2,
+        currentWeather
+      );
       this.lastOptimizationResult = optimization;
       this.generateEnergyReadings(households2, currentWeather);
       this.executeTrades(optimization.tradingPairs, optimization.prices);
@@ -3478,16 +4010,30 @@ var SimulationEngine = class {
     const hour = currentTime.getHours();
     for (const household of households2) {
       if (!household.isOnline) continue;
-      const generation = this.mlEngine.predictEnergyGeneration(household, weather, hour);
-      const consumption = this.mlEngine.predictEnergyDemand(household, hour, currentTime.getDay());
+      const generation = this.mlEngine.predictEnergyGeneration(
+        household,
+        weather,
+        hour
+      );
+      const consumption = this.mlEngine.predictEnergyDemand(
+        household,
+        hour,
+        currentTime.getDay()
+      );
       const timeVariance = Math.sin((hour + household.id) * Math.PI / 12) * 0.1;
       const generationVariance = generation * timeVariance;
       const consumptionVariance = consumption * timeVariance * 1.5;
       const reading = {
         householdId: household.id,
-        solarGeneration: Math.max(0, Math.round((generation + generationVariance) * 100)),
+        solarGeneration: Math.max(
+          0,
+          Math.round((generation + generationVariance) * 100)
+        ),
         // Convert to Wh (realistic scale)
-        energyConsumption: Math.max(0, Math.round((consumption + consumptionVariance) * 100)),
+        energyConsumption: Math.max(
+          0,
+          Math.round((consumption + consumptionVariance) * 100)
+        ),
         // Convert to Wh (realistic scale)
         batteryLevel: household.currentBatteryLevel || 0,
         weatherCondition: weather.condition,
@@ -3497,26 +4043,15 @@ var SimulationEngine = class {
     }
   }
   executeTrades(tradingPairs, prices) {
-    console.log(`\u{1F504} Executing ${tradingPairs.length} energy trades in simulation`);
     for (const pair of tradingPairs) {
       const price = prices.get(pair.supplierId) || 0.12;
-      const totalCost = pair.energyAmount * price;
-      const trade = {
+      this.simulationData.addEnergyTrade({
         sellerHouseholdId: pair.supplierId,
         buyerHouseholdId: pair.demanderId,
         energyAmount: Math.round(pair.energyAmount * 1e3),
-        // Convert to Wh
         pricePerKwh: Math.round(price * 100),
-        // Convert to cents
-        tradeType: "surplus_sale",
-        createdAt: /* @__PURE__ */ new Date(),
-        completedAt: /* @__PURE__ */ new Date()
-      };
-      console.log(`\u{1F4B0} Trade: Household ${pair.supplierId} \u2192 ${pair.demanderId}: ${pair.energyAmount.toFixed(2)} kWh @ $${price.toFixed(3)}/kWh`);
-      this.simulationData.addEnergyTrade(trade);
-    }
-    if (tradingPairs.length === 0) {
-      console.log(`\u26A0\uFE0F No trading pairs identified - checking household energy balances...`);
+        tradeType: "surplus_sale"
+      });
     }
   }
   updateBatteryLevels(households2, batteryStrategy) {
@@ -3558,7 +4093,10 @@ var SimulationEngine = class {
       const households2 = this.simulationData.getHouseholds();
       const currentWeather = this.weatherSimulator.getCurrentWeather();
       if (households2.length > 0) {
-        return this.mlEngine.optimizeEnergyDistribution(households2, currentWeather);
+        return this.mlEngine.optimizeEnergyDistribution(
+          households2,
+          currentWeather
+        );
       } else {
         return {
           tradingPairs: [],
@@ -3573,7 +4111,9 @@ var SimulationEngine = class {
     return this.lastOptimizationResult;
   }
   selectRandomHouseholds(households2, count2) {
-    const sorted = [...households2].sort((a, b) => (a.currentBatteryLevel || 0) - (b.currentBatteryLevel || 0));
+    const sorted = [...households2].sort(
+      (a, b) => (a.currentBatteryLevel || 0) - (b.currentBatteryLevel || 0)
+    );
     return sorted.slice(0, count2).map((h) => h.id);
   }
   getEquityAnalysis() {
@@ -3588,7 +4128,10 @@ var SimulationEngine = class {
         emergencySupport: false
       };
     }
-    const optimization = this.mlEngine.optimizeEnergyDistribution(households2, currentWeather);
+    const optimization = this.mlEngine.optimizeEnergyDistribution(
+      households2,
+      currentWeather
+    );
     const totalHouseholds = households2.length;
     const vulnerableCount = Math.floor(totalHouseholds * 0.15);
     const equityScore = 1 - vulnerableCount / totalHouseholds;
@@ -3609,8 +4152,16 @@ var SimulationEngine = class {
     let batteryStorageTotal = 0;
     for (const household of households2) {
       if (household.isOnline) {
-        const generation = this.mlEngine.predictEnergyGeneration(household, currentWeather, hour);
-        const consumption = this.mlEngine.predictEnergyDemand(household, hour, (/* @__PURE__ */ new Date()).getDay());
+        const generation = this.mlEngine.predictEnergyGeneration(
+          household,
+          currentWeather,
+          hour
+        );
+        const consumption = this.mlEngine.predictEnergyDemand(
+          household,
+          hour,
+          (/* @__PURE__ */ new Date()).getDay()
+        );
         totalGeneration += generation;
         totalConsumption += consumption;
         batteryStorageTotal += (household.currentBatteryLevel || 0) * (household.batteryCapacity || 0) / 100;
@@ -3623,9 +4174,15 @@ var SimulationEngine = class {
       0
       // 0.45kg CO2 per kWh saved
     );
-    const averagePrice = recentTrades.length > 0 ? recentTrades.reduce((sum, trade) => sum + (trade.pricePerKwh || 0), 0) / recentTrades.length : 5;
+    const averagePrice = recentTrades.length > 0 ? recentTrades.reduce(
+      (sum, trade) => sum + (trade.pricePerKwh || 0),
+      0
+    ) / recentTrades.length : 5;
     const averageDistance = this.calculateAverageDistance(households2);
-    const networkEfficiency = this.calculateNetworkEfficiency(totalGeneration, totalConsumption);
+    const networkEfficiency = this.calculateNetworkEfficiency(
+      totalGeneration,
+      totalConsumption
+    );
     const currentBatteryLevel = batteryStorageTotal;
     return {
       totalHouseholds: households2.length,
@@ -3653,13 +4210,9 @@ var SimulationEngine = class {
     return efficiency;
   }
   logSimulationMetrics(optimization, weather) {
-    console.log(`\u{1F4CA} Simulation Update - Weather: ${weather.condition}`);
-    console.log(`\u26A1 Grid Stability: ${(optimization.gridStability * 100).toFixed(1)}%`);
-    console.log(`\u{1F504} Active Trades: ${optimization.tradingPairs.length}`);
-    console.log(`\u{1F4A1} Recommendations: ${optimization.recommendations.length}`);
-    if (optimization.recommendations.length > 0) {
-      console.log(`\u{1F3AF} Key Recommendation: ${optimization.recommendations[0]}`);
-    }
+    console.log(
+      `\u{1F4CA} Sim: ${weather.condition} | Grid: ${(optimization.gridStability * 100).toFixed(1)}% | Trades: ${optimization.tradingPairs.length}`
+    );
   }
 };
 var WeatherSimulator = class {
@@ -3685,21 +4238,51 @@ var WeatherSimulator = class {
   }
   initializeWeatherCycle() {
     this.weatherCycle = [
-      { condition: "sunny", temperature: 28, cloudCover: 10, windSpeed: 8, solarEfficiency: 0.95 },
-      { condition: "partly-cloudy", temperature: 25, cloudCover: 40, windSpeed: 12, solarEfficiency: 0.75 },
-      { condition: "cloudy", temperature: 22, cloudCover: 80, windSpeed: 15, solarEfficiency: 0.45 },
-      { condition: "overcast", temperature: 20, cloudCover: 95, windSpeed: 18, solarEfficiency: 0.25 },
-      { condition: "rainy", temperature: 18, cloudCover: 100, windSpeed: 22, solarEfficiency: 0.15 }
+      {
+        condition: "sunny",
+        temperature: 28,
+        cloudCover: 10,
+        windSpeed: 8,
+        solarEfficiency: 0.95
+      },
+      {
+        condition: "partly-cloudy",
+        temperature: 25,
+        cloudCover: 40,
+        windSpeed: 12,
+        solarEfficiency: 0.75
+      },
+      {
+        condition: "cloudy",
+        temperature: 22,
+        cloudCover: 80,
+        windSpeed: 15,
+        solarEfficiency: 0.45
+      },
+      {
+        condition: "overcast",
+        temperature: 20,
+        cloudCover: 95,
+        windSpeed: 18,
+        solarEfficiency: 0.25
+      },
+      {
+        condition: "rainy",
+        temperature: 18,
+        cloudCover: 100,
+        windSpeed: 22,
+        solarEfficiency: 0.15
+      }
     ];
   }
   getTemperatureForCondition(condition) {
     const temps = {
-      "sunny": 28,
+      sunny: 28,
       "partly-cloudy": 25,
-      "cloudy": 22,
-      "overcast": 20,
-      "rainy": 18,
-      "stormy": 16
+      cloudy: 22,
+      overcast: 20,
+      rainy: 18,
+      stormy: 16
     };
     const hour = (/* @__PURE__ */ new Date()).getHours();
     const dailyVariation = Math.sin((hour - 6) / 12 * Math.PI) * 3;
@@ -3707,44 +4290,47 @@ var WeatherSimulator = class {
   }
   getCloudCoverForCondition(condition) {
     const covers = {
-      "sunny": 10,
+      sunny: 10,
       "partly-cloudy": 40,
-      "cloudy": 80,
-      "overcast": 95,
-      "rainy": 100,
-      "stormy": 100
+      cloudy: 80,
+      overcast: 95,
+      rainy: 100,
+      stormy: 100
     };
     return covers[condition];
   }
   getWindSpeedForCondition(condition) {
     const windSpeeds = {
-      "sunny": 8,
+      sunny: 8,
       "partly-cloudy": 12,
-      "cloudy": 15,
-      "overcast": 18,
-      "rainy": 22,
-      "stormy": 35
+      cloudy: 15,
+      overcast: 18,
+      rainy: 22,
+      stormy: 35
     };
     return windSpeeds[condition];
   }
   getSolarEfficiencyForCondition(condition) {
     const efficiencies = {
-      "sunny": 0.95,
+      sunny: 0.95,
       "partly-cloudy": 0.75,
-      "cloudy": 0.45,
-      "overcast": 0.25,
-      "rainy": 0.15,
-      "stormy": 0.05
+      cloudy: 0.45,
+      overcast: 0.25,
+      rainy: 0.15,
+      stormy: 0.05
     };
     return efficiencies[condition];
   }
 };
 var OutageSimulator = class {
   activeOutages = /* @__PURE__ */ new Set();
+  mlEngine;
+  constructor(mlEngine) {
+    this.mlEngine = mlEngine;
+  }
   async simulateOutage(householdIds, allHouseholds) {
     householdIds.forEach((id) => this.activeOutages.add(id));
-    const mlEngine = new MLEnergyEngine();
-    return mlEngine.simulateOutageResponse(householdIds, allHouseholds);
+    return this.mlEngine.simulateOutageResponse(householdIds, allHouseholds);
   }
   getActiveOutages() {
     return Array.from(this.activeOutages);
@@ -3756,6 +4342,40 @@ var OutageSimulator = class {
 
 // server/email-service.ts
 import nodemailer from "nodemailer";
+var APP_URL = () => process.env.CLIENT_URL || "http://localhost:5000";
+function emailShell(headerBg, title, subtitle, body) {
+  return `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+    <div style="background:linear-gradient(135deg,${headerBg});color:#fff;padding:20px;border-radius:8px 8px 0 0">
+      <h1 style="margin:0;font-size:24px">${title}</h1>
+      <p style="margin:5px 0 0;opacity:.9">${subtitle}</p>
+    </div>
+    <div style="background:#f8fafc;padding:30px;border-radius:0 0 8px 8px;border:1px solid #e2e8f0">${body}</div>
+  </div>`;
+}
+function infoBox(borderColor, heading, items) {
+  const lis = items.map((i) => `<li style="margin:8px 0">${i}</li>`).join("");
+  return `<div style="background:#fff;padding:20px;border-radius:8px;margin:20px 0;border-left:4px solid ${borderColor}">
+    <h3 style="margin-top:0;color:#374151">${heading}</h3>
+    <ul style="list-style:none;padding:0">${lis}</ul>
+  </div>`;
+}
+function ctaButton(text2, color, path3 = "") {
+  return `<div style="text-align:center;margin:30px 0">
+    <a href="${APP_URL()}${path3}" style="background:${color};color:#fff;padding:12px 24px;text-decoration:none;border-radius:6px;font-weight:bold;display:inline-block">${text2}</a>
+  </div>`;
+}
+function tradeDetailItems(trade) {
+  return [
+    `<strong>Energy Amount:</strong> ${trade.energyAmount} kWh`,
+    `<strong>Price per kWh:</strong> \u20B9${trade.pricePerKwh}`,
+    `<strong>Total Value:</strong> \u20B9${(trade.energyAmount * trade.pricePerKwh).toFixed(2)}`,
+    `<strong>Trade Type:</strong> ${trade.tradeType === "sell" ? "\u{1F50B} Selling Energy" : "\u26A1 Buying Energy"}`
+  ];
+}
+var EMAIL_FOOTER = `<hr style="border:none;border-top:1px solid #e2e8f0;margin:30px 0">
+  <p style="color:#6b7280;font-size:14px;text-align:center">
+    \u{1F30D} SolarSense - Building a sustainable energy future together<br>Decentralized \u2022 Resilient \u2022 Equitable
+  </p>`;
 var EmailService = class {
   transporter = null;
   constructor() {
@@ -3768,392 +4388,157 @@ var EmailService = class {
         host: "smtp.gmail.com",
         port: 587,
         secure: false,
-        // true for 465, false for other ports
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASSWORD
-          // Use app password for Gmail
-        },
-        tls: {
-          rejectUnauthorized: true
-        },
+        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASSWORD },
+        tls: { rejectUnauthorized: true },
         connectionTimeout: 1e4,
-        // 10 seconds timeout
         socketTimeout: 1e4,
-        // 10 seconds timeout
         greetingTimeout: 5e3
-        // 5 seconds timeout
       });
-      if (this.transporter) {
-        const verifyPromise = this.transporter.verify();
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error("Connection verification timeout")), 15e3);
-        });
-        await Promise.race([verifyPromise, timeoutPromise]);
-        console.log("\u{1F4E7} Email service initialized successfully");
-      }
+      await Promise.race([
+        this.transporter.verify(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Verification timeout")), 15e3))
+      ]);
+      console.log("\u{1F4E7} Email service initialized successfully");
     } catch (error) {
       console.warn("\u26A0\uFE0F Email service initialization failed:", error);
-      console.warn("\u{1F4E7} Email notifications will be disabled but application will continue normally");
       this.transporter = null;
     }
   }
-  async sendTradeAcceptanceNotification(data) {
+  /** Central send – guards on transporter availability */
+  async send(to, subject, html) {
     if (!this.transporter) {
       console.log("\u{1F4E7} Email service not available, skipping notification");
       return false;
     }
     try {
-      const { offerCreator, acceptor, trade, household } = data;
-      const subject = `\u2705 Your Energy Trade Offer Has Been Accepted! - SolarSense`;
-      const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0; font-size: 24px;">\u{1F31E} SolarSense Energy Trading</h1>
-            <p style="margin: 5px 0 0 0; opacity: 0.9;">Sustainable Energy Trading Platform</p>
-          </div>
-          
-          <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
-            <h2 style="color: #10b981; margin-top: 0;">Great News! Your Energy Offer Has Been Accepted \u{1F389}</h2>
-            
-            <p>Hello <strong>${offerCreator.username}</strong>,</p>
-            
-            <p>Someone has accepted your energy trade offer! Here are the details:</p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10b981;">
-              <h3 style="margin-top: 0; color: #374151;">\u{1F4CA} Trade Details</h3>
-              <ul style="list-style: none; padding: 0;">
-                <li style="margin: 8px 0;"><strong>Energy Amount:</strong> ${trade.energyAmount} kWh</li>
-                <li style="margin: 8px 0;"><strong>Price per kWh:</strong> \u20B9${trade.pricePerKwh}</li>
-                <li style="margin: 8px 0;"><strong>Total Value:</strong> \u20B9${(trade.energyAmount * trade.pricePerKwh).toFixed(2)}</li>
-                <li style="margin: 8px 0;"><strong>Trade Type:</strong> ${trade.tradeType === "sell" ? "\u{1F50B} Selling Energy" : "\u26A1 Buying Energy"}</li>
-              </ul>
-            </div>
-            
-            <div style="background: #eff6ff; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #3b82f6;">
-              <h3 style="margin-top: 0; color: #374151;">\u{1F464} Accepted By</h3>
-              <ul style="list-style: none; padding: 0;">
-                <li style="margin: 8px 0;"><strong>Username:</strong> ${acceptor.username}</li>
-                <li style="margin: 8px 0;"><strong>Household:</strong> ${household.name}</li>
-                <li style="margin: 8px 0;"><strong>Location:</strong> ${acceptor.district}, ${acceptor.state}</li>
-              </ul>
-            </div>
-            
-            <div style="background: #fef3c7; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b;">
-              <h3 style="margin-top: 0; color: #374151;">\u{1F504} Next Steps</h3>
-              <ol style="color: #374151; line-height: 1.6;">
-                <li>Log into your SolarSense dashboard to view full contact details</li>
-                <li>Coordinate with the other party for energy delivery/pickup</li>
-                <li>Confirm the energy transfer once completed</li>
-                <li>Rate your trading experience</li>
-              </ol>
-            </div>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${"https://solarsense-ai.onrender.com/"}" 
-                 style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-                \u{1F4F1} View Dashboard
-              </a>
-            </div>
-            
-            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 30px 0;">
-            
-            <p style="color: #6b7280; font-size: 14px; text-align: center;">
-              \u{1F30D} SolarSense - Building a sustainable energy future together<br>
-              Decentralized \u2022 Resilient \u2022 Equitable
-            </p>
-          </div>
-        </div>
-      `;
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: offerCreator.email,
-        subject,
-        html: htmlContent
-      };
-      await this.transporter.sendMail(mailOptions);
-      console.log(`\u{1F4E7} Trade acceptance notification sent to ${offerCreator.email}`);
+      await this.transporter.sendMail({ from: process.env.EMAIL_USER, to, subject, html });
+      console.log(`\u{1F4E7} Notification sent to ${to}`);
       return true;
     } catch (error) {
-      console.error("\u274C Failed to send trade acceptance notification:", error);
+      console.error("\u274C Failed to send email:", error);
       return false;
     }
+  }
+  // -- Notifications ----------------------------------------------------------
+  async sendTradeAcceptanceNotification(data) {
+    const { offerCreator, acceptor, trade, household } = data;
+    const body = `
+      <h2 style="color:#10b981;margin-top:0">Great News! Your Energy Offer Has Been Accepted \u{1F389}</h2>
+      <p>Hello <strong>${offerCreator.username}</strong>,</p>
+      <p>Someone has accepted your energy trade offer! Here are the details:</p>
+      ${infoBox("#10b981", "\u{1F4CA} Trade Details", tradeDetailItems(trade))}
+      ${infoBox("#3b82f6", "\u{1F464} Accepted By", [
+      `<strong>Username:</strong> ${acceptor.username}`,
+      `<strong>Household:</strong> ${household.name}`,
+      `<strong>Location:</strong> ${acceptor.district}, ${acceptor.state}`
+    ])}
+      <div style="background:#fef3c7;padding:20px;border-radius:8px;margin:20px 0;border-left:4px solid #f59e0b">
+        <h3 style="margin-top:0;color:#374151">\u{1F504} Next Steps</h3>
+        <ol style="color:#374151;line-height:1.6">
+          <li>Log into your SolarSense dashboard to view full contact details</li>
+          <li>Coordinate with the other party for energy delivery/pickup</li>
+          <li>Confirm the energy transfer once completed</li>
+          <li>Rate your trading experience</li>
+        </ol>
+      </div>
+      ${ctaButton("\u{1F4F1} View Dashboard", "#10b981")}
+      ${EMAIL_FOOTER}`;
+    return this.send(
+      offerCreator.email,
+      "\u2705 Your Energy Trade Offer Has Been Accepted! - SolarSense",
+      emailShell("#10b981,#059669", "\u{1F31E} SolarSense Energy Trading", "Sustainable Energy Trading Platform", body)
+    );
   }
   async sendContactSharingNotification(recipient, sender, trade) {
-    if (!this.transporter) {
-      console.log("\u{1F4E7} Email service not available, skipping notification");
-      return false;
-    }
-    try {
-      const subject = `\u{1F4DE} Contact Details Shared - Energy Trade #${trade.id} - SolarSense`;
-      const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #3b82f6, #2563eb); color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0; font-size: 24px;">\u{1F4DE} Contact Information Shared</h1>
-            <p style="margin: 5px 0 0 0; opacity: 0.9;">Energy Trade #${trade.id}</p>
-          </div>
-          
-          <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
-            <h2 style="color: #3b82f6; margin-top: 0;">Contact Details Available \u{1F4F1}</h2>
-            
-            <p>Hello <strong>${recipient.username}</strong>,</p>
-            
-            <p>Contact information has been shared for your energy trade. You can now coordinate directly with:</p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #3b82f6;">
-              <h3 style="margin-top: 0; color: #374151;">\u{1F464} Contact Information</h3>
-              <ul style="list-style: none; padding: 0;">
-                <li style="margin: 8px 0;"><strong>Name:</strong> ${sender.username}</li>
-                <li style="margin: 8px 0;"><strong>Email:</strong> ${sender.email}</li>
-                <li style="margin: 8px 0;"><strong>Phone:</strong> ${sender.phone || "Not provided"}</li>
-                <li style="margin: 8px 0;"><strong>Location:</strong> ${sender.district}, ${sender.state}</li>
-              </ul>
-            </div>
-            
-            <p style="color: #374151; line-height: 1.6;">
-              Please reach out to coordinate the energy transfer details, timing, and any technical requirements.
-            </p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${"https://solarsense-ai.onrender.com/"}" 
-                 style="background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-                \u{1F4F1} View Dashboard
-              </a>
-            </div>
-          </div>
-        </div>
-      `;
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: recipient.email,
-        subject,
-        html: htmlContent
-      };
-      await this.transporter.sendMail(mailOptions);
-      console.log(`\u{1F4E7} Contact sharing notification sent to ${recipient.email}`);
-      return true;
-    } catch (error) {
-      console.error("\u274C Failed to send contact sharing notification:", error);
-      return false;
-    }
+    const body = `
+      <h2 style="color:#3b82f6;margin-top:0">Contact Details Available \u{1F4F1}</h2>
+      <p>Hello <strong>${recipient.username}</strong>,</p>
+      <p>Contact information has been shared for your energy trade. You can now coordinate directly with:</p>
+      ${infoBox("#3b82f6", "\u{1F464} Contact Information", [
+      `<strong>Name:</strong> ${sender.username}`,
+      `<strong>Email:</strong> ${sender.email}`,
+      `<strong>Phone:</strong> ${sender.phone || "Not provided"}`,
+      `<strong>Location:</strong> ${sender.district}, ${sender.state}`
+    ])}
+      <p style="color:#374151;line-height:1.6">Please reach out to coordinate the energy transfer details, timing, and any technical requirements.</p>
+      ${ctaButton("\u{1F4F1} View Dashboard", "#3b82f6")}`;
+    return this.send(
+      recipient.email,
+      `\u{1F4DE} Contact Details Shared - Energy Trade #${trade.id} - SolarSense`,
+      emailShell("#3b82f6,#2563eb", "\u{1F4DE} Contact Information Shared", `Energy Trade #${trade.id}`, body)
+    );
   }
   async sendTradeCancellationNotification(recipient, trade, creatorName) {
-    if (!this.transporter) {
-      console.log("\u{1F4E7} Email service not available, skipping notification");
-      return false;
-    }
-    try {
-      const subject = `\u274C Energy Trade Cancelled - Trade #${trade.id} - SolarSense`;
-      const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0; font-size: 24px;">\u274C Trade Cancelled</h1>
-            <p style="margin: 5px 0 0 0; opacity: 0.9;">Energy Trade #${trade.id}</p>
-          </div>
-          
-          <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
-            <h2 style="color: #ef4444; margin-top: 0;">Trade No Longer Available \u{1F6AB}</h2>
-            
-            <p>Hello <strong>${recipient.username}</strong>,</p>
-            
-            <p>Unfortunately, the energy trade you applied to has been cancelled by the offer creator.</p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #ef4444;">
-              <h3 style="margin-top: 0; color: #374151;">\u{1F4CA} Cancelled Trade Details</h3>
-              <ul style="list-style: none; padding: 0;">
-                <li style="margin: 8px 0;"><strong>Energy Amount:</strong> ${trade.energyAmount} kWh</li>
-                <li style="margin: 8px 0;"><strong>Price per kWh:</strong> \u20B9${trade.pricePerKwh}</li>
-                <li style="margin: 8px 0;"><strong>Total Value:</strong> \u20B9${(trade.energyAmount * trade.pricePerKwh).toFixed(2)}</li>
-                <li style="margin: 8px 0;"><strong>Trade Type:</strong> ${trade.tradeType === "sell" ? "\u{1F50B} Selling Energy" : "\u26A1 Buying Energy"}</li>
-                <li style="margin: 8px 0;"><strong>Cancelled By:</strong> ${creatorName}</li>
-              </ul>
-            </div>
-            
-            <p style="color: #374151; line-height: 1.6;">
-              We apologize for any inconvenience. Please check the marketplace for other available energy trading opportunities.
-            </p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="https://solarsense-ai.onrender.com/" 
-                 style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-                \u{1F50D} Browse Available Trades
-              </a>
-            </div>
-          </div>
-        </div>
-      `;
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: recipient.email,
-        subject,
-        html: htmlContent
-      };
-      await this.transporter.sendMail(mailOptions);
-      console.log(`\u{1F4E7} Trade cancellation notification sent to ${recipient.email}`);
-      return true;
-    } catch (error) {
-      console.error("\u274C Failed to send trade cancellation notification:", error);
-      return false;
-    }
+    const body = `
+      <h2 style="color:#ef4444;margin-top:0">Trade No Longer Available \u{1F6AB}</h2>
+      <p>Hello <strong>${recipient.username}</strong>,</p>
+      <p>Unfortunately, the energy trade you applied to has been cancelled by the offer creator.</p>
+      ${infoBox("#ef4444", "\u{1F4CA} Cancelled Trade Details", [
+      ...tradeDetailItems(trade),
+      `<strong>Cancelled By:</strong> ${creatorName}`
+    ])}
+      <p style="color:#374151;line-height:1.6">We apologize for any inconvenience. Please check the marketplace for other available energy trading opportunities.</p>
+      ${ctaButton("\u{1F50D} Browse Available Trades", "#10b981")}`;
+    return this.send(
+      recipient.email,
+      `\u274C Energy Trade Cancelled - Trade #${trade.id} - SolarSense`,
+      emailShell("#ef4444,#dc2626", "\u274C Trade Cancelled", `Energy Trade #${trade.id}`, body)
+    );
   }
   async sendApplicationCancellationNotification(offerCreator, applicant, trade) {
-    if (!this.transporter) {
-      console.log("\u{1F4E7} Email service not available, skipping notification");
-      return false;
-    }
-    try {
-      const subject = `\u{1F4E4} Application Withdrawn - SolarSense`;
-      const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #f59e0b, #d97706); color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0; font-size: 24px;">\u{1F4E4} Application Withdrawn</h1>
-            <p style="margin: 5px 0 0 0; opacity: 0.9;">Energy Trade Application</p>
-          </div>
-          
-          <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
-            <h2 style="color: #f59e0b; margin-top: 0;">Application Cancelled \u{1F4CB}</h2>
-            
-            <p>Hello <strong>${offerCreator.username}</strong>,</p>
-            
-            <p>A potential trading partner has withdrawn their application for your energy trade.</p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f59e0b;">
-              <h3 style="margin-top: 0; color: #374151;">\u{1F464} Withdrawn Application</h3>
-              <ul style="list-style: none; padding: 0;">
-                <li style="margin: 8px 0;"><strong>Applicant:</strong> ${applicant.username}</li>
-                <li style="margin: 8px 0;"><strong>Location:</strong> ${applicant.district}, ${applicant.state}</li>
-                <li style="margin: 8px 0;"><strong>Trade:</strong> ${trade.energyAmount} kWh at \u20B9${trade.pricePerKwh}/kWh</li>
-                <li style="margin: 8px 0;"><strong>Status:</strong> Application Cancelled</li>
-              </ul>
-            </div>
-            
-            <p style="color: #374151; line-height: 1.6;">
-              Your trade is still active and available for other interested parties to apply.
-            </p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="https://solarsense-ai.onrender.com/" 
-                 style="background: #3b82f6; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-                \u{1F4F1} View Trade Applications
-              </a>
-            </div>
-          </div>
-        </div>
-      `;
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: offerCreator.email,
-        subject,
-        html: htmlContent
-      };
-      await this.transporter.sendMail(mailOptions);
-      console.log(`\u{1F4E7} Application cancellation notification sent to ${offerCreator.email}`);
-      return true;
-    } catch (error) {
-      console.error("\u274C Failed to send application cancellation notification:", error);
-      return false;
-    }
+    const body = `
+      <h2 style="color:#f59e0b;margin-top:0">Application Cancelled \u{1F4CB}</h2>
+      <p>Hello <strong>${offerCreator.username}</strong>,</p>
+      <p>A potential trading partner has withdrawn their application for your energy trade.</p>
+      ${infoBox("#f59e0b", "\u{1F464} Withdrawn Application", [
+      `<strong>Applicant:</strong> ${applicant.username}`,
+      `<strong>Location:</strong> ${applicant.district}, ${applicant.state}`,
+      `<strong>Trade:</strong> ${trade.energyAmount} kWh at \u20B9${trade.pricePerKwh}/kWh`,
+      `<strong>Status:</strong> Application Cancelled`
+    ])}
+      <p style="color:#374151;line-height:1.6">Your trade is still active and available for other interested parties to apply.</p>
+      ${ctaButton("\u{1F4F1} View Trade Applications", "#3b82f6")}`;
+    return this.send(
+      offerCreator.email,
+      "\u{1F4E4} Application Withdrawn - SolarSense",
+      emailShell("#f59e0b,#d97706", "\u{1F4E4} Application Withdrawn", "Energy Trade Application", body)
+    );
   }
   async sendApplicationApprovalNotification(applicant, tradeOwner, trade, household) {
-    if (!this.transporter) {
-      console.log("\u{1F4E7} Email service not available, skipping notification");
-      return false;
-    }
-    try {
-      const subject = `\u{1F389} Your Energy Trade Application Approved! - SolarSense`;
-      const htmlContent = `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h1 style="margin: 0; font-size: 24px;">\u{1F31E} SolarSense Energy Trading</h1>
-            <p style="margin: 5px 0 0 0; opacity: 0.9;">Application Approved!</p>
-          </div>
-          
-          <div style="background: #f8fafc; padding: 30px; border-radius: 0 0 8px 8px; border: 1px solid #e2e8f0;">
-            <h2 style="color: #10b981; margin-top: 0;">Great News! Your Application Has Been Approved \u2705</h2>
-            
-            <p>Hello <strong>${applicant.username}</strong>,</p>
-            
-            <p>Excellent news! <strong>${tradeOwner.username}</strong> has approved your energy trade application. Here are the trade details:</p>
-            
-            <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #10b981;">
-              <h3 style="margin-top: 0; color: #374151;">\u{1F4CA} Approved Trade Details</h3>
-              <ul style="list-style: none; padding: 0;">
-                <li style="margin: 8px 0;"><strong>Energy Amount:</strong> ${trade.energyAmount} kWh</li>
-                <li style="margin: 8px 0;"><strong>Price per kWh:</strong> \u20B9${trade.pricePerKwh}</li>
-                <li style="margin: 8px 0;"><strong>Total Value:</strong> \u20B9${(trade.energyAmount * trade.pricePerKwh).toFixed(2)}</li>
-                <li style="margin: 8px 0;"><strong>Trade Type:</strong> ${trade.tradeType === "sell" ? "\u{1F50B} Energy Sale" : "\u26A1 Energy Purchase"}</li>
-                ${household ? `<li style="margin: 8px 0;"><strong>Household:</strong> ${household.name}</li>` : ""}
-              </ul>
-            </div>
-
-            <div style="background: #fef3c7; padding: 15px; border-radius: 6px; border-left: 4px solid #f59e0b; margin: 20px 0;">
-              <h4 style="margin: 0 0 10px 0; color: #92400e;">\u{1F4DE} Next Steps</h4>
-              <p style="margin: 0; color: #92400e; font-size: 14px;">
-                To proceed with this trade, you need to <strong>share your contact details</strong> so both parties can coordinate the energy transfer. 
-                You can do this from your dashboard.
-              </p>
-            </div>
-            
-            <p style="color: #374151; line-height: 1.6;">
-              Once you share your contact information, both you and ${tradeOwner.username} will be able to coordinate the technical details, 
-              timing, and logistics of the energy transfer.
-            </p>
-            
-            <div style="text-align: center; margin: 30px 0;">
-              <a href="${process.env.CLIENT_URL || "http://localhost:5000"}/storage" 
-                 style="background: #10b981; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-                \u{1F4F1} Share Contact Details
-              </a>
-            </div>
-            
-            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
-              <p style="color: #6b7280; font-size: 12px; margin: 0;">
-                This email was sent automatically by SolarSense. If you have questions, please contact us through the platform.
-              </p>
-            </div>
-          </div>
-        </div>
-      `;
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to: applicant.email,
-        subject,
-        html: htmlContent
-      };
-      await this.transporter.sendMail(mailOptions);
-      console.log(`\u{1F4E7} Application approval notification sent to ${applicant.email}`);
-      return true;
-    } catch (error) {
-      console.error("\u274C Failed to send application approval notification:", error);
-      return false;
-    }
+    const details = [...tradeDetailItems(trade)];
+    if (household) details.push(`<strong>Household:</strong> ${household.name}`);
+    const body = `
+      <h2 style="color:#10b981;margin-top:0">Great News! Your Application Has Been Approved \u2705</h2>
+      <p>Hello <strong>${applicant.username}</strong>,</p>
+      <p>Excellent news! <strong>${tradeOwner.username}</strong> has approved your energy trade application. Here are the trade details:</p>
+      ${infoBox("#10b981", "\u{1F4CA} Approved Trade Details", details)}
+      <div style="background:#fef3c7;padding:15px;border-radius:6px;border-left:4px solid #f59e0b;margin:20px 0">
+        <h4 style="margin:0 0 10px;color:#92400e">\u{1F4DE} Next Steps</h4>
+        <p style="margin:0;color:#92400e;font-size:14px">
+          To proceed with this trade, you need to <strong>share your contact details</strong> so both parties can coordinate the energy transfer. You can do this from your dashboard.
+        </p>
+      </div>
+      <p style="color:#374151;line-height:1.6">Once you share your contact information, both you and ${tradeOwner.username} will be able to coordinate the technical details, timing, and logistics of the energy transfer.</p>
+      ${ctaButton("\u{1F4F1} Share Contact Details", "#10b981", "/storage")}
+      <div style="margin-top:30px;padding-top:20px;border-top:1px solid #e5e7eb">
+        <p style="color:#6b7280;font-size:12px;margin:0">This email was sent automatically by SolarSense. If you have questions, please contact us through the platform.</p>
+      </div>`;
+    return this.send(
+      applicant.email,
+      "\u{1F389} Your Energy Trade Application Approved! - SolarSense",
+      emailShell("#10b981,#059669", "\u{1F31E} SolarSense Energy Trading", "Application Approved!", body)
+    );
   }
-  // Test email functionality
   async sendTestEmail(to) {
-    if (!this.transporter) {
-      console.log("\u{1F4E7} Email service not available");
-      return false;
-    }
-    try {
-      const mailOptions = {
-        from: process.env.EMAIL_USER,
-        to,
-        subject: "\u{1F527} SolarSense Email Service Test",
-        html: `
-          <div style="font-family: Arial, sans-serif; padding: 20px;">
-            <h2 style="color: #10b981;">\u2705 Email Service Working!</h2>
-            <p>This is a test email from your SolarSense application.</p>
-            <p>Email notifications are now properly configured.</p>
-          </div>
-        `
-      };
-      await this.transporter.sendMail(mailOptions);
-      console.log(`\u{1F4E7} Test email sent to ${to}`);
-      return true;
-    } catch (error) {
-      console.error("\u274C Failed to send test email:", error);
-      return false;
-    }
+    return this.send(
+      to,
+      "\u{1F527} SolarSense Email Service Test",
+      `<div style="font-family:Arial,sans-serif;padding:20px">
+        <h2 style="color:#10b981">\u2705 Email Service Working!</h2>
+        <p>This is a test email from your SolarSense application.</p>
+        <p>Email notifications are now properly configured.</p>
+      </div>`
+    );
   }
 };
 var emailService = new EmailService();
@@ -4270,7 +4655,9 @@ function setupRoutes(app) {
   app.get("/api/energy-trades", async (req, res) => {
     try {
       if (!req.isAuthenticated()) {
-        return res.status(401).json({ error: "Authentication required. Please log in to view energy trades." });
+        return res.status(401).json({
+          error: "Authentication required. Please log in to view energy trades."
+        });
       }
       const trades = await storage.getEnergyTradesByUser(req.user.id);
       res.json(trades);
@@ -4285,11 +4672,21 @@ function setupRoutes(app) {
     try {
       const userHouseholds = await storage.getHouseholdsByUser(req.user.id);
       if (userHouseholds.length === 0) {
-        return res.status(400).json({ error: "No household found. Please create a household first." });
+        return res.status(400).json({
+          error: "No household found. Please create a household first."
+        });
       }
-      const { energyAmount, pricePerKwh, tradeType, sellerHouseholdId, buyerHouseholdId } = req.body;
+      const {
+        energyAmount,
+        pricePerKwh,
+        tradeType,
+        sellerHouseholdId,
+        buyerHouseholdId
+      } = req.body;
       if (!energyAmount || !pricePerKwh || !tradeType) {
-        return res.status(400).json({ error: "Missing required fields: energyAmount, pricePerKwh, tradeType" });
+        return res.status(400).json({
+          error: "Missing required fields: energyAmount, pricePerKwh, tradeType"
+        });
       }
       if (energyAmount <= 0 || pricePerKwh <= 0) {
         return res.status(400).json({ error: "Energy amount and price must be positive" });
@@ -4297,7 +4694,9 @@ function setupRoutes(app) {
       const userHouseholdIds = userHouseholds.map((h) => h.id);
       const requestedHouseholdId = tradeType === "sell" ? sellerHouseholdId : buyerHouseholdId;
       if (requestedHouseholdId && !userHouseholdIds.includes(requestedHouseholdId)) {
-        return res.status(403).json({ error: "You can only create trades for your own households" });
+        return res.status(403).json({
+          error: "You can only create trades for your own households"
+        });
       }
       const tradeData = {
         sellerHouseholdId: tradeType === "sell" ? sellerHouseholdId || userHouseholds[0].id : void 0,
@@ -4321,7 +4720,13 @@ function setupRoutes(app) {
     }
     try {
       const tradeId = parseInt(req.params.id);
-      const { energyAmount, pricePerKwh, tradeType, sellerHouseholdId, buyerHouseholdId } = req.body;
+      const {
+        energyAmount,
+        pricePerKwh,
+        tradeType,
+        sellerHouseholdId,
+        buyerHouseholdId
+      } = req.body;
       const existingTrade = await storage.getEnergyTradeById(tradeId);
       if (!existingTrade) {
         return res.status(404).json({ error: "Trade not found" });
@@ -4329,7 +4734,9 @@ function setupRoutes(app) {
       const userHouseholds = await storage.getHouseholdsByUser(req.user.id);
       const userHouseholdIds = userHouseholds.map((h) => h.id);
       if (userHouseholdIds.length === 0) {
-        return res.status(400).json({ error: "No household found. Please create a household first." });
+        return res.status(400).json({
+          error: "No household found. Please create a household first."
+        });
       }
       const ownsThisTrade = existingTrade.sellerHouseholdId && userHouseholdIds.includes(existingTrade.sellerHouseholdId) || existingTrade.buyerHouseholdId && userHouseholdIds.includes(existingTrade.buyerHouseholdId);
       if (!ownsThisTrade) {
@@ -4342,14 +4749,18 @@ function setupRoutes(app) {
         });
       }
       if (!energyAmount || !pricePerKwh || !tradeType) {
-        return res.status(400).json({ error: "Missing required fields: energyAmount, pricePerKwh, tradeType" });
+        return res.status(400).json({
+          error: "Missing required fields: energyAmount, pricePerKwh, tradeType"
+        });
       }
       if (energyAmount <= 0 || pricePerKwh <= 0) {
         return res.status(400).json({ error: "Energy amount and price must be positive" });
       }
       const requestedHouseholdId = tradeType === "sell" ? sellerHouseholdId : buyerHouseholdId;
       if (requestedHouseholdId && !userHouseholdIds.includes(requestedHouseholdId)) {
-        return res.status(403).json({ error: "You can only update trades for your own households" });
+        return res.status(403).json({
+          error: "You can only update trades for your own households"
+        });
       }
       const updatedTradeData = {
         energyAmount: Math.round(parseFloat(energyAmount)),
@@ -4360,7 +4771,10 @@ function setupRoutes(app) {
         sellerHouseholdId: tradeType === "sell" ? sellerHouseholdId || userHouseholds[0].id : void 0,
         buyerHouseholdId: tradeType === "buy" ? buyerHouseholdId || userHouseholds[0].id : void 0
       };
-      const updatedTrade = await storage.updateEnergyTrade(tradeId, updatedTradeData);
+      const updatedTrade = await storage.updateEnergyTrade(
+        tradeId,
+        updatedTradeData
+      );
       res.json({ success: true, trade: updatedTrade });
     } catch (error) {
       console.error("Failed to update trade:", error);
@@ -4385,15 +4799,22 @@ function setupRoutes(app) {
       if (!userHouseholdId || existingTrade.sellerHouseholdId !== userHouseholdId && existingTrade.buyerHouseholdId !== userHouseholdId) {
         return res.status(403).json({ error: "You can only cancel your own trades" });
       }
-      const cancelledTrade = await storage.updateEnergyTradeStatus(tradeId, "cancelled");
+      const cancelledTrade = await storage.updateEnergyTradeStatus(
+        tradeId,
+        "cancelled"
+      );
       try {
         const applications = await storage.getTradeAcceptancesByTrade(tradeId);
         if (applications.length > 0) {
-          console.log(`\u{1F4E7} Notifying ${applications.length} applicants about trade cancellation`);
+          console.log(
+            `\u{1F4E7} Notifying ${applications.length} applicants about trade cancellation`
+          );
           await Promise.all(
             applications.map(async (application) => {
               try {
-                const applicantUser = await storage.getUser(application.acceptorUserId);
+                const applicantUser = await storage.getUser(
+                  application.acceptorUserId
+                );
                 if (applicantUser && cancelledTrade) {
                   await emailService.sendTradeCancellationNotification(
                     applicantUser,
@@ -4402,15 +4823,25 @@ function setupRoutes(app) {
                   );
                 }
               } catch (emailError) {
-                console.error(`Failed to send cancellation email to applicant ${application.acceptorUserId}:`, emailError);
+                console.error(
+                  `Failed to send cancellation email to applicant ${application.acceptorUserId}:`,
+                  emailError
+                );
               }
             })
           );
         }
       } catch (emailError) {
-        console.error("Failed to send trade cancellation notifications:", emailError);
+        console.error(
+          "Failed to send trade cancellation notifications:",
+          emailError
+        );
       }
-      res.json({ success: true, trade: cancelledTrade, message: "Trade cancelled successfully. All applicants have been notified." });
+      res.json({
+        success: true,
+        trade: cancelledTrade,
+        message: "Trade cancelled successfully. All applicants have been notified."
+      });
     } catch (error) {
       console.error("Failed to cancel trade:", error);
       res.status(500).json({ error: "Failed to cancel trade" });
@@ -4434,11 +4865,15 @@ function setupRoutes(app) {
       try {
         const applications = await storage.getTradeAcceptancesByTrade(tradeId);
         if (applications.length > 0) {
-          console.log(`\u{1F4E7} Notifying ${applications.length} applicants about trade deletion`);
+          console.log(
+            `\u{1F4E7} Notifying ${applications.length} applicants about trade deletion`
+          );
           await Promise.all(
             applications.map(async (application) => {
               try {
-                const applicantUser = await storage.getUser(application.acceptorUserId);
+                const applicantUser = await storage.getUser(
+                  application.acceptorUserId
+                );
                 if (applicantUser) {
                   await emailService.sendTradeCancellationNotification(
                     applicantUser,
@@ -4447,16 +4882,25 @@ function setupRoutes(app) {
                   );
                 }
               } catch (emailError) {
-                console.error(`Failed to send deletion email to applicant ${application.acceptorUserId}:`, emailError);
+                console.error(
+                  `Failed to send deletion email to applicant ${application.acceptorUserId}:`,
+                  emailError
+                );
               }
             })
           );
         }
       } catch (emailError) {
-        console.error("Failed to send trade deletion notifications:", emailError);
+        console.error(
+          "Failed to send trade deletion notifications:",
+          emailError
+        );
       }
       await storage.deleteEnergyTrade(tradeId);
-      res.json({ success: true, message: "Trade deleted successfully. All applicants have been notified." });
+      res.json({
+        success: true,
+        message: "Trade deleted successfully. All applicants have been notified."
+      });
     } catch (error) {
       console.error("Failed to delete trade:", error);
       res.status(500).json({ error: "Failed to delete trade" });
@@ -4465,7 +4909,9 @@ function setupRoutes(app) {
   app.get("/api/energy-readings", async (req, res) => {
     try {
       if (!req.isAuthenticated()) {
-        return res.status(401).json({ error: "Authentication required. Please log in to view energy readings." });
+        return res.status(401).json({
+          error: "Authentication required. Please log in to view energy readings."
+        });
       }
       const readings = await storage.getEnergyReadings();
       res.json(readings);
@@ -4476,16 +4922,22 @@ function setupRoutes(app) {
   app.get("/api/market/realtime", async (req, res) => {
     try {
       if (!req.isAuthenticated()) {
-        return res.status(401).json({ error: "Authentication required. Please log in to view market data." });
+        return res.status(401).json({
+          error: "Authentication required. Please log in to view market data."
+        });
       }
       const { latitude, longitude } = req.query;
       if (!latitude || !longitude) {
-        return res.status(400).json({ error: "Location required for accurate market data. Please provide latitude and longitude." });
+        return res.status(400).json({
+          error: "Location required for accurate market data. Please provide latitude and longitude."
+        });
       }
       const lat = parseFloat(latitude);
       const lon = parseFloat(longitude);
       if (isNaN(lat) || isNaN(lon)) {
-        return res.status(400).json({ error: "Invalid coordinates. Latitude and longitude must be numbers." });
+        return res.status(400).json({
+          error: "Invalid coordinates. Latitude and longitude must be numbers."
+        });
       }
       const marketData = await storage.getRealtimeMarketData(lat, lon);
       res.json(marketData);
@@ -4497,7 +4949,9 @@ function setupRoutes(app) {
   app.get("/api/analytics/network", async (req, res) => {
     try {
       if (!req.isAuthenticated()) {
-        return res.status(401).json({ error: "Authentication required. Please log in to view network analytics." });
+        return res.status(401).json({
+          error: "Authentication required. Please log in to view network analytics."
+        });
       }
       const analytics = await storage.getNetworkAnalytics();
       res.json(analytics);
@@ -4508,7 +4962,9 @@ function setupRoutes(app) {
   app.post("/api/ai/chat", async (req, res) => {
     try {
       if (!req.isAuthenticated()) {
-        return res.status(401).json({ error: "Authentication required. Please log in to use the chat." });
+        return res.status(401).json({
+          error: "Authentication required. Please log in to use the chat."
+        });
       }
       const { message } = req.body;
       if (!message) {
@@ -4546,7 +5002,10 @@ function setupRoutes(app) {
           households: households2,
           energyData: households2.length > 0
         };
-        const response = await generateEnergyOptimizationResponse(message, userContext);
+        const response = await generateEnergyOptimizationResponse(
+          message,
+          userContext
+        );
         try {
           await storage.createChatMessage({
             userId,
@@ -4588,7 +5047,7 @@ function setupRoutes(app) {
       const errorResponse = "I'm having trouble right now. Please try again in a moment.";
       try {
         const userId = req.user?.id || null;
-        const sessionId = req.sessionID || `session_${Date.now()}`;
+        const sessionId = req.sessionId || `session_${Date.now()}`;
         await storage.createChatMessage({
           userId,
           sessionId,
@@ -4612,9 +5071,15 @@ function setupRoutes(app) {
       const messageLimit = limit ? parseInt(limit) : 50;
       let messages;
       if (req.user?.id) {
-        messages = await storage.getChatMessagesByUser(req.user.id, messageLimit);
-      } else if (req.sessionID) {
-        messages = await storage.getChatMessagesBySession(req.sessionID, messageLimit);
+        messages = await storage.getChatMessagesByUser(
+          req.user.id,
+          messageLimit
+        );
+      } else if (req.sessionId) {
+        messages = await storage.getChatMessagesBySession(
+          req.sessionId,
+          messageLimit
+        );
       } else {
         messages = [];
       }
@@ -4626,8 +5091,8 @@ function setupRoutes(app) {
   });
   app.post("/api/chat/clear", async (req, res) => {
     try {
-      if (req.sessionID) {
-        await storage.clearSessionData(req.sessionID);
+      if (req.sessionId) {
+        await storage.clearSessionData(req.sessionId);
         res.json({ success: true, message: "Chat history cleared" });
       } else {
         res.status(400).json({ error: "No session found" });
@@ -4765,7 +5230,9 @@ function setupRoutes(app) {
         equity: {
           fairDistributionScore: Math.round(equityData.equityScore * 100),
           // Convert to percentage
-          averageEnergySecurity: Math.round(equityData.averageEnergySecurity * 100),
+          averageEnergySecurity: Math.round(
+            equityData.averageEnergySecurity * 100
+          ),
           vulnerableHouseholds: typeof equityData.vulnerableHouseholds === "number" ? equityData.vulnerableHouseholds : equityData.vulnerableHouseholds.length,
           emergencySupport: equityData.emergencySupport
         }
@@ -4781,7 +5248,9 @@ function setupRoutes(app) {
       return res.status(401).json({ error: "Authentication required" });
     }
     try {
-      const availableOffers = await storage.getAvailableOffersForUser(req.user.id);
+      const availableOffers = await storage.getAvailableOffersForUser(
+        req.user.id
+      );
       res.json(availableOffers);
     } catch (error) {
       console.error("Failed to get available offers:", error);
@@ -4799,7 +5268,9 @@ function setupRoutes(app) {
       }
       const userHouseholds = await storage.getHouseholdsByUser(req.user.id);
       if (userHouseholds.length === 0) {
-        return res.status(400).json({ error: "No household found. Please create a household first." });
+        return res.status(400).json({
+          error: "No household found. Please create a household first."
+        });
       }
       const acceptorHouseholdId = userHouseholds[0].id;
       const trade = await storage.getEnergyTradeById(tradeId);
@@ -4815,7 +5286,9 @@ function setupRoutes(app) {
         return res.status(400).json({ error: "You cannot apply to your own trade" });
       }
       const existingApplications = await storage.getTradeAcceptancesByTrade(tradeId);
-      const alreadyApplied = existingApplications.some((app2) => app2.acceptorHouseholdId === acceptorHouseholdId);
+      const alreadyApplied = existingApplications.some(
+        (app2) => app2.acceptorHouseholdId === acceptorHouseholdId
+      );
       if (alreadyApplied) {
         return res.status(400).json({ error: "You have already applied to this trade" });
       }
@@ -4829,7 +5302,9 @@ function setupRoutes(app) {
         return res.status(400).json({ error: validation.error.issues });
       }
       const acceptance = await storage.createTradeAcceptance(validation.data);
-      console.log(`\u{1F4DD} Application created for trade ${validation.data.tradeId} by user ${req.user.id} (household ${acceptorHouseholdId})`);
+      console.log(
+        `\u{1F4DD} Application created for trade ${validation.data.tradeId} by user ${req.user.id} (household ${acceptorHouseholdId})`
+      );
       try {
         const trade2 = await storage.getEnergyTradeById(validation.data.tradeId);
         if (trade2) {
@@ -4853,7 +5328,9 @@ function setupRoutes(app) {
               trade: trade2,
               household
             });
-            console.log(`\u{1F4E7} Email notification sent to offer creator: ${offerCreatorUser.email}`);
+            console.log(
+              `\u{1F4E7} Email notification sent to offer creator: ${offerCreatorUser.email}`
+            );
           }
         }
       } catch (emailError) {
@@ -4888,7 +5365,9 @@ function setupRoutes(app) {
       const applications = await storage.getTradeAcceptancesByTrade(tradeId);
       const enrichedApplications = await Promise.all(
         applications.map(async (app2) => {
-          const applicantHousehold = await storage.getHousehold(app2.acceptorHouseholdId);
+          const applicantHousehold = await storage.getHousehold(
+            app2.acceptorHouseholdId
+          );
           const applicantUser = applicantHousehold ? await storage.getUser(applicantHousehold.userId) : null;
           return {
             ...app2,
@@ -4933,7 +5412,9 @@ function setupRoutes(app) {
         return res.status(403).json({ error: "Only trade owner can award trades" });
       }
       const winningApplication = await storage.getTradeAcceptancesByTrade(tradeId);
-      const selectedApp = winningApplication.find((app2) => app2.id === parseInt(applicationId));
+      const selectedApp = winningApplication.find(
+        (app2) => app2.id === parseInt(applicationId)
+      );
       if (!selectedApp) {
         return res.status(404).json({ error: "Application not found" });
       }
@@ -4947,11 +5428,17 @@ function setupRoutes(app) {
         tradeUpdates.status = "accepted";
       }
       await storage.updateEnergyTrade(tradeId, tradeUpdates);
-      const otherApplications = winningApplication.filter((app2) => app2.id !== parseInt(applicationId));
-      await Promise.all(
-        otherApplications.map((app2) => storage.updateTradeAcceptanceStatus(app2.id, "declined"))
+      const otherApplications = winningApplication.filter(
+        (app2) => app2.id !== parseInt(applicationId)
       );
-      console.log(`\u{1F3C6} Trade ${tradeId} awarded to application ${applicationId} (household ${acceptorHouseholdId})`);
+      await Promise.all(
+        otherApplications.map(
+          (app2) => storage.updateTradeAcceptanceStatus(app2.id, "declined")
+        )
+      );
+      console.log(
+        `\u{1F3C6} Trade ${tradeId} awarded to application ${applicationId} (household ${acceptorHouseholdId})`
+      );
       try {
         const offerCreator = req.user;
         const acceptorUser = await storage.getUser(selectedApp.acceptorUserId);
@@ -4961,18 +5448,30 @@ function setupRoutes(app) {
             offerCreator,
             trade
           );
-          console.log(`\u{1F4E7} Contact details sent to acceptor: ${acceptorUser.email}`);
+          console.log(
+            `\u{1F4E7} Contact details sent to acceptor: ${acceptorUser.email}`
+          );
           await emailService.sendContactSharingNotification(
             offerCreator,
             acceptorUser,
             trade
           );
-          console.log(`\u{1F4E7} Contact details sent to offer creator: ${offerCreator.email}`);
-          await storage.updateTradeAcceptanceStatus(selectedApp.id, "contacted");
-          console.log(`\u{1F4F1} Application status updated to 'contacted' for coordination phase`);
+          console.log(
+            `\u{1F4E7} Contact details sent to offer creator: ${offerCreator.email}`
+          );
+          await storage.updateTradeAcceptanceStatus(
+            selectedApp.id,
+            "contacted"
+          );
+          console.log(
+            `\u{1F4F1} Application status updated to 'contacted' for coordination phase`
+          );
         }
       } catch (emailError) {
-        console.error("Failed to send automatic contact sharing notifications:", emailError);
+        console.error(
+          "Failed to send automatic contact sharing notifications:",
+          emailError
+        );
         await storage.updateTradeAcceptanceStatus(selectedApp.id, "awarded");
       }
       res.json({
@@ -5002,7 +5501,9 @@ function setupRoutes(app) {
       return res.status(401).json({ error: "Authentication required" });
     }
     try {
-      const applications = await storage.getApplicationsToMyTrades(req.user.id);
+      const applications = await storage.getApplicationsToMyTrades(
+        req.user.id
+      );
       res.json(applications);
     } catch (error) {
       console.error("Failed to get trade applications:", error);
@@ -5015,17 +5516,23 @@ function setupRoutes(app) {
     }
     try {
       const acceptanceId = parseInt(req.params.id);
-      const userAcceptances = await storage.getTradeAcceptancesByUser(req.user.id);
+      const userAcceptances = await storage.getTradeAcceptancesByUser(
+        req.user.id
+      );
       const acceptance = userAcceptances.find((acc) => acc.id === acceptanceId);
       if (!acceptance) {
         const userTrades = await storage.getEnergyTradesByUser(req.user.id);
         const userAcceptedTrades = await Promise.all(
           userTrades.map(async (trade) => {
-            const acceptances = await storage.getTradeAcceptancesByTrade(trade.id);
+            const acceptances = await storage.getTradeAcceptancesByTrade(
+              trade.id
+            );
             return acceptances.find((acc) => acc.id === acceptanceId);
           })
         );
-        const foundAcceptance = userAcceptedTrades.find((acc) => acc !== void 0);
+        const foundAcceptance = userAcceptedTrades.find(
+          (acc) => acc !== void 0
+        );
         if (!foundAcceptance) {
           return res.status(403).json({
             error: "Access denied - you are not authorized for this acceptance"
@@ -5049,18 +5556,24 @@ function setupRoutes(app) {
           let recipientUser = null;
           if (contactInfo.acceptance?.acceptorUserId === req.user.id) {
             if (contactInfo.trade.sellerHouseholdId) {
-              const household = await storage.getHousehold(contactInfo.trade.sellerHouseholdId);
+              const household = await storage.getHousehold(
+                contactInfo.trade.sellerHouseholdId
+              );
               if (household) {
                 recipientUser = await storage.getUser(household.userId);
               }
             } else if (contactInfo.trade.buyerHouseholdId) {
-              const household = await storage.getHousehold(contactInfo.trade.buyerHouseholdId);
+              const household = await storage.getHousehold(
+                contactInfo.trade.buyerHouseholdId
+              );
               if (household) {
                 recipientUser = await storage.getUser(household.userId);
               }
             }
           } else {
-            recipientUser = await storage.getUser(contactInfo.acceptance.acceptorUserId);
+            recipientUser = await storage.getUser(
+              contactInfo.acceptance.acceptorUserId
+            );
           }
           if (recipientUser) {
             await emailService.sendContactSharingNotification(
@@ -5068,11 +5581,16 @@ function setupRoutes(app) {
               req.user,
               contactInfo.trade
             );
-            console.log(`\u{1F4E7} Contact sharing notification sent to: ${recipientUser.email}`);
+            console.log(
+              `\u{1F4E7} Contact sharing notification sent to: ${recipientUser.email}`
+            );
           }
         }
       } catch (emailError) {
-        console.error("Failed to send contact sharing notification:", emailError);
+        console.error(
+          "Failed to send contact sharing notification:",
+          emailError
+        );
       }
       res.json({
         success: true,
@@ -5095,7 +5613,10 @@ function setupRoutes(app) {
       if (!status) {
         return res.status(400).json({ error: "Status is required" });
       }
-      const acceptance = await storage.updateTradeAcceptanceStatus(acceptanceId, status);
+      const acceptance = await storage.updateTradeAcceptanceStatus(
+        acceptanceId,
+        status
+      );
       if (!acceptance) {
         return res.status(404).json({ error: "Trade acceptance not found" });
       }
@@ -5115,7 +5636,9 @@ function setupRoutes(app) {
     }
     try {
       const acceptanceId = parseInt(req.params.id);
-      const userAcceptances = await storage.getTradeAcceptancesByUser(req.user.id);
+      const userAcceptances = await storage.getTradeAcceptancesByUser(
+        req.user.id
+      );
       const acceptance = userAcceptances.find((a) => a.id === acceptanceId);
       if (!acceptance) {
         return res.status(404).json({ error: "Trade acceptance not found or access denied" });
@@ -5146,10 +5669,15 @@ function setupRoutes(app) {
             req.user,
             trade
           );
-          console.log(`\u{1F4E7} Application cancellation notification sent to offer creator: ${offerCreator.email}`);
+          console.log(
+            `\u{1F4E7} Application cancellation notification sent to offer creator: ${offerCreator.email}`
+          );
         }
       } catch (emailError) {
-        console.error("Failed to send application cancellation notification:", emailError);
+        console.error(
+          "Failed to send application cancellation notification:",
+          emailError
+        );
       }
       res.json({
         success: true,
@@ -5166,15 +5694,22 @@ function setupRoutes(app) {
     }
     try {
       const acceptanceId = parseInt(req.params.id);
-      const userAcceptances = await storage.getTradeAcceptancesByUser(req.user.id);
+      const userAcceptances = await storage.getTradeAcceptancesByUser(
+        req.user.id
+      );
       const acceptance = userAcceptances.find((a) => a.id === acceptanceId);
       if (!acceptance) {
         return res.status(404).json({ error: "Trade acceptance not found or access denied" });
       }
       if (acceptance.status !== "applied") {
-        return res.status(400).json({ error: "Can only withdraw applications that are in 'applied' status" });
+        return res.status(400).json({
+          error: "Can only withdraw applications that are in 'applied' status"
+        });
       }
-      const updatedAcceptance = await storage.updateTradeAcceptanceStatus(acceptanceId, "withdrawn");
+      const updatedAcceptance = await storage.updateTradeAcceptanceStatus(
+        acceptanceId,
+        "withdrawn"
+      );
       if (!updatedAcceptance) {
         return res.status(404).json({ error: "Trade acceptance not found" });
       }
@@ -5198,13 +5733,19 @@ function setupRoutes(app) {
       if (!decision || !["accept", "reject"].includes(decision)) {
         return res.status(400).json({ error: "Decision must be 'accept' or 'reject'" });
       }
-      const userAcceptances = await storage.getTradeAcceptancesByUser(req.user.id);
+      const userAcceptances = await storage.getTradeAcceptancesByUser(
+        req.user.id
+      );
       let acceptance = userAcceptances.find((a) => a.id === acceptanceId);
       if (!acceptance) {
         const userTrades = await storage.getEnergyTradesByUser(req.user.id);
         for (const trade2 of userTrades) {
-          const tradeAcceptances2 = await storage.getTradeAcceptancesByTrade(trade2.id);
-          const foundAcceptance = tradeAcceptances2.find((a) => a.id === acceptanceId);
+          const tradeAcceptances2 = await storage.getTradeAcceptancesByTrade(
+            trade2.id
+          );
+          const foundAcceptance = tradeAcceptances2.find(
+            (a) => a.id === acceptanceId
+          );
           if (foundAcceptance) {
             acceptance = foundAcceptance;
             break;
@@ -5225,15 +5766,26 @@ function setupRoutes(app) {
         return res.status(403).json({ error: "You can only make decisions on your own trades" });
       }
       if (acceptance.status !== "applied") {
-        return res.status(400).json({ error: "Can only make decisions on applications in 'applied' status" });
+        return res.status(400).json({
+          error: "Can only make decisions on applications in 'applied' status"
+        });
       }
       if (decision === "accept") {
-        const updatedAcceptance = await storage.updateTradeAcceptanceStatus(acceptanceId, "awarded");
+        const updatedAcceptance = await storage.updateTradeAcceptanceStatus(
+          acceptanceId,
+          "awarded"
+        );
         await storage.updateEnergyTradeStatus(acceptance.tradeId, "accepted");
         try {
-          const applicantUser = await storage.getUser(acceptance.acceptorUserId);
-          const applicantHouseholds = await storage.getHouseholdsByUser(acceptance.acceptorUserId);
-          const applicantHousehold = applicantHouseholds.find((h) => h.id === acceptance.acceptorHouseholdId);
+          const applicantUser = await storage.getUser(
+            acceptance.acceptorUserId
+          );
+          const applicantHouseholds = await storage.getHouseholdsByUser(
+            acceptance.acceptorUserId
+          );
+          const applicantHousehold = applicantHouseholds.find(
+            (h) => h.id === acceptance.acceptorHouseholdId
+          );
           if (applicantUser) {
             await emailService.sendApplicationApprovalNotification(
               applicantUser,
@@ -5243,7 +5795,10 @@ function setupRoutes(app) {
             );
           }
         } catch (emailError) {
-          console.warn("Failed to send approval email notification:", emailError);
+          console.warn(
+            "Failed to send approval email notification:",
+            emailError
+          );
         }
         res.json({
           success: true,
@@ -5251,7 +5806,10 @@ function setupRoutes(app) {
           message: "Application accepted! You can now share contact information for energy delivery coordination."
         });
       } else {
-        const updatedAcceptance = await storage.updateTradeAcceptanceStatus(acceptanceId, "owner_rejected");
+        const updatedAcceptance = await storage.updateTradeAcceptanceStatus(
+          acceptanceId,
+          "owner_rejected"
+        );
         res.json({
           success: true,
           acceptance: updatedAcceptance,
@@ -5269,15 +5827,22 @@ function setupRoutes(app) {
     }
     try {
       const acceptanceId = parseInt(req.params.id);
-      const userAcceptances = await storage.getTradeAcceptancesByUser(req.user.id);
+      const userAcceptances = await storage.getTradeAcceptancesByUser(
+        req.user.id
+      );
       const acceptance = userAcceptances.find((a) => a.id === acceptanceId);
       if (!acceptance) {
         return res.status(404).json({ error: "Trade acceptance not found or access denied" });
       }
       if (acceptance.status !== "awarded") {
-        return res.status(400).json({ error: "Can only reject applications that have been awarded by owner" });
+        return res.status(400).json({
+          error: "Can only reject applications that have been awarded by owner"
+        });
       }
-      const updatedAcceptance = await storage.updateTradeAcceptanceStatus(acceptanceId, "applicant_rejected");
+      const updatedAcceptance = await storage.updateTradeAcceptanceStatus(
+        acceptanceId,
+        "applicant_rejected"
+      );
       await storage.updateEnergyTradeStatus(acceptance.tradeId, "pending");
       res.json({
         success: true,
@@ -5289,44 +5854,37 @@ function setupRoutes(app) {
       res.status(500).json({ error: "Failed to reject application" });
     }
   });
-  app.post("/api/test-email", async (req, res) => {
-    if (!req.isAuthenticated()) {
-      return res.status(401).json({ error: "Authentication required" });
-    }
-    try {
-      const { email } = req.body;
-      const testEmail = email || req.user.email;
-      const success = await emailService.sendTestEmail(testEmail);
-      if (success) {
-        res.json({
-          success: true,
-          message: `Test email sent successfully to ${testEmail}`
-        });
-      } else {
-        res.status(500).json({
-          error: "Email service not configured. Please set EMAIL_USER and EMAIL_PASSWORD environment variables."
-        });
-      }
-    } catch (error) {
-      console.error("Failed to send test email:", error);
-      res.status(500).json({ error: "Failed to send test email" });
-    }
-  });
 }
 
 // server/auth.ts
 init_schema();
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
+var SESSION_MAX_AGE = 24 * 60 * 60 * 1e3;
+var COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax",
+  maxAge: SESSION_MAX_AGE
+};
 function generateSessionId() {
   return crypto.randomBytes(32).toString("hex");
 }
 async function hashPassword(password) {
-  const saltRounds = 12;
-  return await bcrypt.hash(password, saltRounds);
+  return bcrypt.hash(password, 12);
 }
 async function comparePasswords(supplied, stored) {
-  return await bcrypt.compare(supplied, stored);
+  return bcrypt.compare(supplied, stored);
+}
+function safeUser(user) {
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    phone: user.phone,
+    state: user.state,
+    district: user.district
+  };
 }
 function setupAuth(app) {
   app.use(async (req, res, next) => {
@@ -5337,13 +5895,7 @@ function setupAuth(app) {
     const user = await storage.getSessionUser(sessionId);
     if (user) {
       req.user = user;
-      res.cookie("sessionId", sessionId, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 24 * 60 * 60 * 1e3
-        // 24 hours
-      });
+      res.cookie("sessionId", sessionId, COOKIE_OPTIONS);
     }
     req.isAuthenticated = () => !!req.user;
     req.sessionId = sessionId;
@@ -5356,66 +5908,58 @@ function setupAuth(app) {
         return res.status(400).json({ error: "Email and password required" });
       }
       const user = await storage.getUserByEmail(email);
-      if (!user) {
-        return res.status(401).json({ error: "Invalid credentials" });
-      }
-      const passwordMatch = await comparePasswords(password, user.password);
-      if (!passwordMatch) {
+      if (!user || !await comparePasswords(password, user.password)) {
         return res.status(401).json({ error: "Invalid credentials" });
       }
       const sessionId = generateSessionId();
       await storage.createSession(sessionId, user.id);
-      res.cookie("sessionId", sessionId, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 24 * 60 * 60 * 1e3
-        // 24 hours
-      });
-      res.json({
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email
-        },
-        sessionId
-      });
+      res.cookie("sessionId", sessionId, COOKIE_OPTIONS);
+      res.json({ user: safeUser(user), sessionId });
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ error: "Login failed" });
     }
   });
   app.post("/api/logout", async (req, res) => {
-    const sessionId = req.sessionId;
-    if (sessionId) {
-      await storage.deleteSession(sessionId);
+    try {
+      if (req.sessionId) {
+        await storage.deleteSession(req.sessionId);
+      }
+      res.clearCookie("sessionId");
+      res.json({ message: "Logged out successfully" });
+    } catch (error) {
+      console.error("Logout error:", error);
+      res.clearCookie("sessionId");
+      res.json({ message: "Logged out successfully" });
     }
-    res.clearCookie("sessionId");
-    res.json({ message: "Logged out successfully" });
   });
   app.get("/api/user", (req, res) => {
     if (!req.isAuthenticated()) {
       return res.status(401).json({ error: "Not authenticated" });
     }
-    const user = req.user;
-    res.json({
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      phone: user.phone,
-      state: user.state,
-      district: user.district
-    });
+    res.json(safeUser(req.user));
   });
   app.post("/api/register", async (req, res) => {
     try {
       const validationResult = signupSchema.safeParse(req.body);
       if (!validationResult.success) {
-        const errorMessage = validationResult.error.errors[0]?.message || "Invalid input data";
-        return res.status(400).json({ error: errorMessage });
+        return res.status(400).json({
+          error: validationResult.error.errors[0]?.message || "Invalid input data"
+        });
       }
-      const { username, email, password, phone, state, district, householdName, address, solarCapacity, batteryCapacity } = validationResult.data;
-      const sanitizedData = {
+      const {
+        username,
+        email,
+        password,
+        phone,
+        state,
+        district,
+        householdName,
+        address,
+        solarCapacity,
+        batteryCapacity
+      } = validationResult.data;
+      const sanitized = {
         username: username.trim(),
         email: email.toLowerCase().trim(),
         phone: phone.trim(),
@@ -5424,50 +5968,36 @@ function setupAuth(app) {
         householdName: householdName.trim(),
         address: address.trim()
       };
-      const existingUser = await storage.getUserByEmail(sanitizedData.email);
-      if (existingUser) {
+      const [existingEmail, existingUsername] = await Promise.all([
+        storage.getUserByEmail(sanitized.email),
+        storage.getUserByUsername(sanitized.username)
+      ]);
+      if (existingEmail)
         return res.status(400).json({ error: "Email already registered" });
-      }
-      const existingUsername = await storage.getUserByUsername(sanitizedData.username);
-      if (existingUsername) {
+      if (existingUsername)
         return res.status(400).json({ error: "Username already taken" });
-      }
       const hashedPassword = await hashPassword(password);
       const newUser = await storage.createUser({
-        username: sanitizedData.username,
-        email: sanitizedData.email,
+        username: sanitized.username,
+        email: sanitized.email,
         password: hashedPassword,
-        phone: sanitizedData.phone || null,
-        state: sanitizedData.state || null,
-        district: sanitizedData.district || null,
-        householdName: sanitizedData.householdName
+        phone: sanitized.phone || null,
+        state: sanitized.state || null,
+        district: sanitized.district || null,
+        householdName: sanitized.householdName
       });
       await storage.createHousehold({
         userId: newUser.id,
-        name: sanitizedData.householdName,
-        address: sanitizedData.address,
+        name: sanitized.householdName,
+        address: sanitized.address,
         solarCapacity,
         batteryCapacity,
         currentBatteryLevel: 50
-        // Default 50%
       });
       const sessionId = generateSessionId();
       await storage.createSession(sessionId, newUser.id);
-      res.cookie("sessionId", sessionId, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        maxAge: 24 * 60 * 60 * 1e3
-        // 24 hours
-      });
-      res.json({
-        user: {
-          id: newUser.id,
-          username: newUser.username,
-          email: newUser.email
-        },
-        sessionId
-      });
+      res.cookie("sessionId", sessionId, COOKIE_OPTIONS);
+      res.json({ user: safeUser(newUser), sessionId });
     } catch (error) {
       console.error("Registration error:", error);
       res.status(500).json({ error: "Registration failed" });
@@ -5486,31 +6016,60 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
 var vite_config_default = defineConfig({
-  plugins: [
-    react(),
-    ...process.env.NODE_ENV !== "production" && process.env.REPL_ID !== void 0 ? [
-      await import("@replit/vite-plugin-cartographer").then(
-        (m) => m.cartographer()
-      )
-    ] : []
-  ],
+  plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets")
+      "@shared": path.resolve(import.meta.dirname, "shared")
     }
   },
   root: path.resolve(import.meta.dirname, "client"),
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
-    emptyOutDir: true
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          ui: [
+            "framer-motion",
+            "lucide-react",
+            "class-variance-authority",
+            "clsx",
+            "tailwind-merge"
+          ],
+          query: ["@tanstack/react-query"],
+          forms: ["react-hook-form", "@hookform/resolvers", "zod"],
+          radix: [
+            "@radix-ui/react-dialog",
+            "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-select",
+            "@radix-ui/react-tabs",
+            "@radix-ui/react-toast",
+            "@radix-ui/react-alert-dialog",
+            "@radix-ui/react-scroll-area",
+            "@radix-ui/react-separator",
+            "@radix-ui/react-label",
+            "@radix-ui/react-checkbox",
+            "@radix-ui/react-avatar",
+            "@radix-ui/react-progress",
+            "@radix-ui/react-slot"
+          ],
+          markdown: ["react-markdown", "remark-gfm"]
+        }
+      }
+    },
+    sourcemap: false,
+    target: "esnext",
+    minify: "esbuild"
   },
   server: {
     fs: {
       strict: true,
       deny: ["**/.*"]
     }
+  },
+  optimizeDeps: {
+    include: ["react", "react-dom", "wouter", "@tanstack/react-query"]
   }
 });
 
@@ -5575,7 +6134,14 @@ function serveStatic(app) {
       `Could not find the build directory: ${distPath}, make sure to build the client first`
     );
   }
-  app.use(express.static(distPath));
+  app.use(
+    "/assets",
+    express.static(path2.join(distPath, "assets"), {
+      maxAge: "1y",
+      immutable: true
+    })
+  );
+  app.use(express.static(distPath, { maxAge: "1h" }));
   app.use("*", (_req, res) => {
     res.sendFile(path2.resolve(distPath, "index.html"));
   });
@@ -5583,78 +6149,58 @@ function serveStatic(app) {
 
 // server/index.ts
 init_db();
-import dotenv2 from "dotenv";
-dotenv2.config();
+import dotenv from "dotenv";
+dotenv.config();
 function createServer() {
   const app = express2();
   app.use(
     cors({
       origin: true,
-      // Allow all origins in development
       credentials: true
-      // Enable cookies and auth headers
     })
   );
   app.use(cookieParser());
-  app.use(express2.json());
+  app.use(express2.json({ limit: "10mb" }));
   app.use(express2.urlencoded({ extended: false }));
   app.use((req, res, next) => {
     const start = Date.now();
     const path3 = req.path;
-    let capturedJsonResponse = void 0;
-    const originalResJson = res.json;
-    res.json = function(bodyJson, ...args) {
-      capturedJsonResponse = bodyJson;
-      return originalResJson.apply(res, [bodyJson, ...args]);
-    };
     res.on("finish", () => {
-      const duration = Date.now() - start;
       if (path3.startsWith("/api")) {
-        let logLine = `${req.method} ${path3} ${res.statusCode} in ${duration}ms`;
-        if (capturedJsonResponse) {
-          logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-        }
-        if (logLine.length > 80) {
-          logLine = logLine.slice(0, 79) + "\u2026";
-        }
-        log(logLine);
+        const duration = Date.now() - start;
+        log(`${req.method} ${path3} ${res.statusCode} in ${duration}ms`);
       }
     });
     next();
   });
   return app;
 }
+async function bootstrap() {
+  const isDatabaseConnected = await initializeDatabase();
+  if ("waitForConnectionCheck" in storage && typeof storage.waitForConnectionCheck === "function") {
+    await storage.waitForConnectionCheck();
+  }
+  const storageStatus = "getStorageStatus" in storage && typeof storage.getStorageStatus === "function" ? storage.getStorageStatus() : { type: "database", available: true };
+  log(
+    `Database: ${isDatabaseConnected ? "connected" : "unavailable"} | Storage: ${storageStatus.type}`
+  );
+  return isDatabaseConnected;
+}
 if (process.env.NODE_ENV !== "production") {
   (async () => {
-    const isDatabaseConnected = await initializeDatabase();
-    if ("waitForConnectionCheck" in storage && typeof storage.waitForConnectionCheck === "function") {
-      await storage.waitForConnectionCheck();
-    }
-    let storageStatus;
-    if ("getStorageStatus" in storage && typeof storage.getStorageStatus === "function") {
-      storageStatus = storage.getStorageStatus();
-    } else {
-      storageStatus = { type: "database", available: true };
-    }
-    log(
-      `Database connection: ${isDatabaseConnected ? "\u2713 Connected" : "\u2717 Not connected"}`
-    );
-    log(`Storage type: ${storageStatus.type}`);
+    await bootstrap();
     const app = createServer();
     setupAuth(app);
     setupRoutes(app);
     const port = 5e3;
     const host = "0.0.0.0";
-    const canReuse = process.platform !== "win32";
     const server = app.listen(
       {
         port,
         host,
-        ...canReuse ? { reusePort: true } : {}
+        ...process.platform !== "win32" ? { reusePort: true } : {}
       },
-      () => {
-        log(`serving on http://${host}:${port}`);
-      }
+      () => log(`serving on http://${host}:${port}`)
     );
     if (app.get("env") === "development") {
       await setupVite(app, server);
@@ -5664,20 +6210,7 @@ if (process.env.NODE_ENV !== "production") {
   })();
 }
 async function startProductionServer() {
-  const isDatabaseConnected = await initializeDatabase();
-  if ("waitForConnectionCheck" in storage && typeof storage.waitForConnectionCheck === "function") {
-    await storage.waitForConnectionCheck();
-  }
-  let storageStatus;
-  if ("getStorageStatus" in storage && typeof storage.getStorageStatus === "function") {
-    storageStatus = storage.getStorageStatus();
-  } else {
-    storageStatus = { type: "database", available: true };
-  }
-  console.log(
-    `Database connection: ${isDatabaseConnected ? "\u2713 Connected" : "\u2717 Not connected"}`
-  );
-  console.log(`Storage type: ${storageStatus.type}`);
+  await bootstrap();
   const app = createServer();
   setupAuth(app);
   setupRoutes(app);
@@ -5685,16 +6218,13 @@ async function startProductionServer() {
   const port = parseInt(process.env.PORT || "10000", 10);
   const host = "0.0.0.0";
   const server = app.listen(port, host, () => {
-    console.log(`\u{1F680} SolarSense AI server running on port ${port}`);
-    console.log(
-      `\u{1F310} Health check available at: http://${host}:${port}/api/health`
-    );
+    log(`SolarSense AI running on port ${port}`);
   });
   return server;
 }
 if (process.env.NODE_ENV === "production" && import.meta.url === `file://${process.argv[1]}`) {
   startProductionServer().catch((error) => {
-    console.error("\u274C Failed to start production server:", error);
+    console.error("Failed to start production server:", error);
     process.exit(1);
   });
 }

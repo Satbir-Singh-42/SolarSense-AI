@@ -1,4 +1,11 @@
-import { createContext, ReactNode, useContext, useState, useEffect } from "react";
+import {
+  createContext,
+  ReactNode,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+} from "react";
 import {
   useQuery,
   useMutation,
@@ -10,23 +17,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { z } from "zod";
 
-// Simple health check function to replace the deleted module
 type HealthStatus = {
-  status: 'healthy' | 'unhealthy';
+  status: "healthy" | "unhealthy";
   message: string;
-};
-
-const checkServerHealth = async (): Promise<HealthStatus> => {
-  try {
-    const response = await fetch('/api/health');
-    if (response.ok) {
-      return { status: 'healthy', message: 'Server is running' };
-    } else {
-      return { status: 'unhealthy', message: 'Server returned error' };
-    }
-  } catch (error) {
-    return { status: 'unhealthy', message: 'Cannot connect to server' };
-  }
 };
 
 type AuthContextType = {
@@ -47,24 +40,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
 
-  // Check server health on component mount
-  const checkHealth = async () => {
-    const status = await checkServerHealth();
-    setHealthStatus(status);
-    return status;
-  };
+  const checkHealth = useCallback(async () => {
+    try {
+      const res = await fetch("/api/health");
+      const status: HealthStatus = res.ok
+        ? { status: "healthy", message: "Server is running" }
+        : { status: "unhealthy", message: "Server returned error" };
+      setHealthStatus(status);
+      return status;
+    } catch {
+      const status: HealthStatus = {
+        status: "unhealthy",
+        message: "Cannot connect to server",
+      };
+      setHealthStatus(status);
+      return status;
+    }
+  }, []);
 
   useEffect(() => {
     checkHealth();
-    
-    // Check server health every 2 minutes (reduced from 30 seconds)
-    const healthCheckInterval = setInterval(() => {
-      checkHealth();
-    }, 120000);
+    // Health check every 5 minutes (reduced from 2 min — saves bandwidth)
+    const id = setInterval(checkHealth, 5 * 60 * 1000);
+    return () => clearInterval(id);
+  }, [checkHealth]);
 
-    return () => clearInterval(healthCheckInterval);
-  }, []);
-  
   const {
     data: user,
     error,
@@ -75,9 +75,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         // Add session ID header if available (consistent with apiRequest)
         const headers: Record<string, string> = {};
-        const sessionId = localStorage.getItem('sessionId');
+        const sessionId = localStorage.getItem("sessionId");
         if (sessionId) {
-          headers['x-session-id'] = sessionId;
+          headers["x-session-id"] = sessionId;
         }
 
         const response = await fetch("/api/user", {
@@ -111,18 +111,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/user"], data.user);
-      // Store session ID in localStorage for header-based requests
       if (data.sessionId) {
-        localStorage.setItem('sessionId', data.sessionId);
+        localStorage.setItem("sessionId", data.sessionId);
       }
-      // Clear any existing logout success message to prevent duplicate notifications
       localStorage.removeItem("logoutSuccess");
-      // Remove success toast to prevent duplicate notifications
-      // Success handling is done in the component
-    },
-    onError: (error: Error) => {
-      // Remove toast notification to prevent duplicate validation
-      // Error handling is now done in the component ValidationCard
     },
   });
 
@@ -137,16 +129,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/user"], data.user);
-      // Store session ID in localStorage for header-based requests
       if (data.sessionId) {
-        localStorage.setItem('sessionId', data.sessionId);
+        localStorage.setItem("sessionId", data.sessionId);
       }
-      // Remove success toast to prevent duplicate notifications
-      // Success handling is done in the component
-    },
-    onError: (error: Error) => {
-      // Remove toast notification to prevent duplicate validation
-      // Error handling is now done in the component ValidationCard
     },
   });
 
@@ -155,25 +140,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await apiRequest("POST", "/api/logout");
     },
     onSuccess: () => {
-      // Clear all authentication data
       queryClient.setQueryData(["/api/user"], null);
-      
-      // Clear all cached queries to force fresh data on next login
       queryClient.clear();
-      
-      // Clear any stored user data from localStorage/sessionStorage
       localStorage.removeItem("authToken");
       localStorage.removeItem("sessionId");
       sessionStorage.clear();
-      
-      // Show logout success message in localStorage before redirect
       localStorage.setItem("logoutSuccess", "true");
-      
-      // Redirect to dashboard instead of reloading
       window.location.href = "/";
     },
-    onError: (error: Error) => {
-      // Show validation card for logout errors
+    onError: () => {
       toast({
         title: "Logout failed",
         description: "Server is down. Please try again later.",
@@ -193,8 +168,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         registerMutation,
         healthStatus,
         checkHealth,
-      }}
-    >
+      }}>
       {children}
     </AuthContext.Provider>
   );
