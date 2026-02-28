@@ -973,65 +973,6 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* Navigation Tabs - Positioned below hero section */}
-      <div className="bg-gradient-to-r from-blue-900/40 via-blue-800/30 to-blue-900/40 border-b border-border shadow-sm">
-        <div className="w-full">
-          <div className="flex bg-gradient-to-r from-slate-900/50 via-slate-800/30 to-slate-900/50 p-1 backdrop-blur-sm">
-            <button
-              onClick={() => {
-                setActiveTab("energy-dashboard");
-                window.history.pushState({}, "", "/?tab=energy-dashboard");
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-              className={`flex-1 py-3 sm:py-4 px-3 sm:px-4 md:px-6 text-center font-medium transition-all duration-300 text-sm sm:text-base flex flex-col items-center gap-1 sm:flex-row sm:justify-center sm:gap-2 rounded-lg ${
-                activeTab === "energy-dashboard"
-                  ? "bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg transform scale-[1.02]"
-                  : "text-slate-300 hover:text-white hover:bg-slate-800/50"
-              }`}>
-              <Home className="" size={16} />
-              <div>
-                <span>Market</span>
-                <span className="hidden sm:inline"> Dashboard</span>
-              </div>
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab("energy-trading");
-                window.history.pushState({}, "", "/?tab=energy-trading");
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-              className={`flex-1 py-3 sm:py-4 px-3 sm:px-4 md:px-6 text-center font-medium transition-all duration-300 text-sm sm:text-base flex flex-col items-center gap-1 sm:flex-row sm:justify-center sm:gap-2 rounded-lg ${
-                activeTab === "energy-trading"
-                  ? "bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg transform scale-[1.02]"
-                  : "text-slate-300 hover:text-white hover:bg-slate-800/50"
-              }`}>
-              <TrendingUp className="" size={16} />
-              <div>
-                <span>Trading</span>
-                <span className="hidden sm:inline"> Center</span>
-              </div>
-            </button>
-            <button
-              onClick={() => {
-                setActiveTab("simulation");
-                window.history.pushState({}, "", "/?tab=simulation");
-                window.scrollTo({ top: 0, behavior: "smooth" });
-              }}
-              className={`flex-1 py-3 sm:py-4 px-3 sm:px-4 md:px-6 text-center font-medium transition-all duration-300 text-sm sm:text-base flex flex-col items-center gap-1 sm:flex-row sm:justify-center sm:gap-2 rounded-lg ${
-                activeTab === "simulation"
-                  ? "bg-gradient-to-r from-blue-600 to-cyan-500 text-white shadow-lg transform scale-[1.02]"
-                  : "text-slate-300 hover:text-white hover:bg-slate-800/50"
-              }`}>
-              <Activity className="" size={16} />
-              <div>
-                <span>Simulation</span>
-                <span className="hidden sm:inline"> Lab</span>
-              </div>
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* Main Application Interface */}
       <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 lg:px-8 py-4 sm:py-6 md:py-8 relative">
         {/* Subtle background gradient overlay */}
